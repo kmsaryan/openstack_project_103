@@ -34,7 +34,6 @@ def create_keypair(conn, keypair_name, public_key_file):
     conn.compute.create_keypair(name=keypair_name, public_key=public_key)
     print(f"Created keypair {keypair_name}")
 
-
 def create_network(conn, network_name, subnet_name, tag_name):
     """Create a network and a subnet."""
     # Check if the network already exists
