@@ -56,6 +56,12 @@ def create_and_assign_fip(server, keypair_name, flavor, network_name, security_g
     else:
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Error: {server} did not become active or network not ready.")
         return None
+def generate_configs():
+    """
+    Invoke gen_config.py to generate SSH config and Ansible hosts file.
+    """
+    print("Generating configuration files...")
+    run_command("python3 gen_config.py")
 
 def main(rc_file, tag_name, publickey):
     privatekey = publickey.replace('.pub', '')
@@ -241,7 +247,7 @@ def main(rc_file, tag_name, publickey):
     print(f"Instance Name: {haproxy_server2}")
     print(f"Floating IP: {haproxy_fip2}")
     
-    subprocess.run(["python","rc_file" "tag_name" "gen_config.py"])
+    generate_configs()
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
 if __name__ == "__main__":
     main(sys.argv[1], sys.argv[2], sys.argv[3]) 

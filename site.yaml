@@ -1,0 +1,60 @@
+---
+- hosts: all
+  gather_facts: true
+  become: true
+  vars:
+    packages:
+      - name: haproxy
+      - name: keepalived
+      - name: python3-pip
+      - name: flask
+      - name: gunicorn
+      - name: snmpd
+      - name: nginx
+      - name: gnupg2
+      - name: curl
+      - name: software-properties-common
+      - name: grafana
+      - name: prometheus
+  tasks:
+    - name: Update and upgrade apt packages
+      apt:
+        update_cache: true
+        upgrade: dist
+    - name: Install required packages
+      apt:
+        name: "{{ item.name }}"
+        state: present
+      loop: "{{ packages }}"
+    - name: Install pip packages
+      pip:
+        executable: pip3
+        name: "{{ item.name }}"
+        state: latest
+      loop: "{{ packages }}"
+    - name: Create new directory
+      file:
+        path: "/home/flask-app/"
+        state: directory
+    - name: Copy app.py to webservers
+      template:
+        src: "service.py"
+        dest: "/home/flask-app/app.py"
+    - name: Start flask app
+      shell: |
+        cd /home/flask-app/
+        gunicorn --bind 0.0.0.0:5000 app:app&  
+    - name: Copy snmpd conf file
+      template:
+        src: snmpd.conf.j2
+        dest: "/etc/snmp/snmpd.conf"
+    - name: Run snmpd
+      service:
+        name: snmpd
+        state: restarted
+  handlers:
+    - name: restart services
+      service:
+        name: "{{ item.name }}"
+        state: restarted
+      loop: "{{ packages }}"
