@@ -1,331 +1,248 @@
-import openstack
-import os
-import argparse
 import subprocess
+import sys
+import datetime
 import time
-from datetime import datetime
-from openstack.exceptions import ResourceNotFound
-def log(message):
-    print(f"{datetime.now()} {message}")
-
-def source_rc_file(rc_file):
-    """Source the OpenStack RC file to set environment variables."""
-    import shlex
-
-    with open(rc_file) as file:
-        for line in file:
-            if line.strip() and not line.startswith('#'):
-                key_value = line.strip().split('=', 1)
-                if len(key_value) == 2:
-                    key, value = key_value
-                    value = shlex.split(value)[0]  # Handle quoted values
-                    os.environ[key] = value
+import os
+import openstack.connection
+import openstack.exceptions
+# Create connection to OpenStack
+conn = openstack.connect(
+    auth_url=os.getenv('OS_AUTH_URL'),
+    project_name=os.getenv('OS_PROJECT_NAME'),
+    username=os.getenv('OS_USERNAME'),
+    password=os.getenv('OS_PASSWORD'),
+    user_domain_name=os.getenv('OS_USER_DOMAIN_NAME'),
+    project_domain_name=os.getenv('OS_PROJECT_DOMAIN_NAME')
+)
 
 def run_command(command):
-    """Run a shell command and return the output."""
-    result = subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE)
-    return result.stdout.decode().strip()
+    result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return result.stdout.decode().strip(), result.stderr.decode().strip()
 
-def create_keypair(conn, keypair_name, public_key_file):
-    """Create a keypair for accessing the instances."""
-    existing_keypairs = [kp.name for kp in conn.compute.keypairs()]
-    if keypair_name in existing_keypairs:
-        print(f"Keypair {keypair_name} already exists.")
-        return
+def wait_for_active_state(server, retries=10, delay=30):
+    for _ in range(retries):
+        status, _ = run_command(f"openstack server show {server} -c status -f value")
+        if status.strip() == "ACTIVE":
+            return True
+        time.sleep(delay)
+    return False
 
-    with open(public_key_file, 'r') as f:
-        public_key = f.read().strip()
+def wait_for_network_ready(server, retries=5, delay=15):
+    for _ in range(retries):
+        net_status, _ = run_command(f"openstack server show {server} -c addresses -f value")
+        if net_status.strip():
+            return True
+        time.sleep(delay)
+    return False
 
-    conn.compute.create_keypair(name=keypair_name, public_key=public_key)
-    print(f"Created keypair {keypair_name}")
+def assign_floating_ip(server, floating_ip, retries=5, delay=15):
+    for _ in range(retries):
+        result, _ = run_command(f"openstack server add floating ip {server} {floating_ip}")
+        if result.strip() == "":
+            return True
+        time.sleep(delay)
+    return False
 
-def create_network_resources(conn, network_name, subnet_name, router_name, cidr, tag):
-    """Create or reuse network resources."""
-    network = conn.network.find_network(network_name)
-    if not network:
-        network = conn.network.create_network(name=network_name)
-        log(f"Added {network_name}")
-
-    subnet = conn.network.find_subnet(subnet_name)
-    if not subnet:
-        subnet = conn.network.create_subnet(name=subnet_name, network_id=network.id, ip_version=4, cidr=cidr)
-        log(f"Added {subnet_name}")
-
-    router = conn.network.find_router(router_name)
-    if not router:
-        external_network = conn.network.find_network('ext-net')
-        router = conn.network.create_router(name=router_name, external_gateway_info={"network_id": external_network.id})
-        conn.network.add_interface_to_router(router, subnet_id=subnet.id)
-        log(f"Added {router_name}")
-    
-    security_group = conn.network.find_security_group(tag)
-    if not security_group:
-        security_group = conn.network.create_security_group(name=tag)
-        log(f"Added security group {tag}")
-
-def create_router(conn, router_name, network_name, subnet_name):
-    """Create or reuse a router and attach the subnet to it."""
-    external_network = conn.network.find_network('ext-net')
-    if not external_network:
-        print("External network 'ext-net' not found.")
+def create_and_assign_fip(server, keypair_name, flavor, network_name, security_group_name):
+    fip, _ = run_command(f"openstack floating ip create ext-net -f json | jq -r '.floating_ip_address'")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Creating floating IP for {server}.")
+    run_command(f"openstack server create --image 'Ubuntu 20.04 Focal Fossa x86_64' {server} --key-name {keypair_name} --flavor '{flavor}' --network {network_name} --security-group {security_group_name}")
+    if wait_for_active_state(server) and wait_for_network_ready(server):
+        if not assign_floating_ip(server, fip):
+            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Error: Failed to assign floating IP {fip} to {server}")
+            return None
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Floating IP {fip} assigned to {server}.")
+        return fip
+    else:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Error: {server} did not become active or network not ready.")
         return None
 
-    router = conn.network.find_router(router_name)
-    if router:
-        print(f"{router_name} already exists")
-    else:
-        router = conn.network.create_router(
-            name=router_name,
-            external_gateway_info={"network_id": external_network.id}
-        )
-        conn.network.add_interface_to_router(router, subnet_id=conn.network.find_subnet(subnet_name).id)
-        print(f"Created router {router_name} and attached subnet {subnet_name}")
-    return router
+def main(rc_file, tag_name, publickey):
+    privatekey = publickey.replace('.pub', '')
+    required_dev_servers = 3
+    current_date_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-def create_security_group (conn, security_group_name,tag):
-    """Create or reuse a security group with specified rules."""
-    security_group = conn.network.find_security_group(security_group_name)
-    if security_group:
-        print(f"{security_group_name} already exists")
+    print(f"{current_date_time} Starting deployment of {tag_name} using {rc_file} for credentials.")
+
+    with open(rc_file) as f:
+        for line in f:
+            if line.strip() and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                os.environ[key.strip()] = value.strip()
+                
+    network_name = f"{tag_name}_network"
+    subnet_name = f"{tag_name}_subnet"
+    keypair_name = f"{tag_name}_key"
+    router_name = f"{tag_name}_router"
+    security_group_name = f"{tag_name}_security_group"
+    haproxy_server = f"{tag_name}_HAproxy"
+    haproxy_server2 = f"{tag_name}_HAproxy2"
+    bastion_server = f"{tag_name}_bastion"
+    dev_server = f"{tag_name}_dev"
+    vip_port = f"{tag_name}_vip"
+    sshconfig = f"{tag_name}_SSHconfig"
+    knownhosts = "known_hosts"
+    hostsfile = "hosts"
+    
+    floating_ips, _ = run_command("openstack floating ip list --status DOWN -f value -c 'Floating IP Address'")
+    for ip in floating_ips.splitlines():
+        run_command(f"openstack floating ip delete {ip}")
+    # Keypair check
+    existing_keypairs, _ = run_command("openstack keypair list -f value --column Name")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Checking if we have {keypair_name} available.")
+    if keypair_name in existing_keypairs:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {keypair_name} already exists")
     else:
-        security_group = conn.network.create_security_group(name=security_group_name,)
+        run_command(f"openstack keypair create --public-key {publickey} {keypair_name}")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Adding {keypair_name} associated with {publickey}.")
+
+    # Network check
+    existing_networks, _ = run_command(f"openstack network list --tag {tag_name} --column Name -f value")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Did not detect {network_name} in the OpenStack project, adding it.")
+    if network_name in existing_networks:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {network_name} already exists")
+    else:
+        run_command(f"openstack network create --tag {tag_name} {network_name} -f json")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Added {network_name}.")
+
+    # Subnet check
+    existing_subnets, _ = run_command(f"openstack subnet list --tag {tag_name} --column Name -f value")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Did not detect {subnet_name} in the OpenStack project, adding it.")
+    if subnet_name in existing_subnets:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {subnet_name} already exists")
+    else:
+        run_command(f"openstack subnet create --subnet-range 10.10.0.0/24 --allocation-pool start=10.10.0.2,end=10.10.0.30 --tag {tag_name} --network {network_name} {subnet_name} -f json")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Added {subnet_name}.")
+
+    # Router check
+    existing_routers, _ = run_command(f"openstack router list --tag {tag_name} --column Name -f value")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Did not detect {router_name} in the OpenStack project, adding it.")
+    if router_name in existing_routers:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {router_name} already exists")
+    else:
+        run_command(f"openstack router create --tag {tag_name} {router_name}")
+        run_command(f"openstack router set --external-gateway ext-net {router_name}")
+        run_command(f"openstack router add subnet {router_name} {subnet_name}")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Added {router_name}")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Adding networks to router.")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Done.")
+
+    # Security group check
+    existing_security_groups, _ = run_command(f"openstack security group list --tag {tag_name} -f value")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Adding security group(s).")
+    if security_group_name not in existing_security_groups:
+        run_command(f"openstack security group create --tag {tag_name} {security_group_name} -f json")
         rules = [
-            {"protocol": "tcp", "port_range_min": 22, "port_range_max": 22, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "icmp", "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "tcp", "port_range_min": 80, "port_range_max": 80, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "tcp", "port_range_min": 5000, "port_range_max": 5000, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "tcp", "port_range_min": 8080, "port_range_max": 8080, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "udp", "port_range_min": 6000, "port_range_max": 6000, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "tcp", "port_range_min": 9090, "port_range_max": 9090, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "tcp", "port_range_min": 9100, "port_range_max": 9100, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "tcp", "port_range_min": 3000, "port_range_max": 3000, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "udp", "port_range_min": 161, "port_range_max": 161, "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": "vrrp", "direction": "ingress", "remote_ip_prefix": "0.0.0.0/0"}
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 22 --protocol tcp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 80 --protocol icmp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 5000 --protocol tcp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 8080 --protocol tcp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 6000 --protocol udp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 9090 --protocol tcp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 9100 --protocol tcp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 3000 --protocol tcp --ingress {security_group_name}",
+            f"openstack security group rule create --remote-ip 0.0.0.0/0 --dst-port 161 --protocol udp --ingress {security_group_name}",
+            f"openstack security group rule create --protocol 112 {security_group_name}"  # VRRP protocol
         ]
         for rule in rules:
-            conn.network.create_security_group_rule(security_group_id=security_group.id, **rule)
-        print(f"Created security group {security_group_name} with rules")
-
-def create_or_get_floating_ip(conn, network_name):
-    """Create or get a floating IP."""
-    floating_ips = list(conn.network.ips(status='DOWN', floating_network_id=conn.network.find_network(network_name).id))
-    if floating_ips:
-        return floating_ips[0].floating_ip_address
+            run_command(rule)
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created security group {security_group_name}")
     else:
-        floating_ip = conn.network.create_ip(floating_network_id=conn.network.find_network(network_name).id)
-        return floating_ip.floating_ip_address
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {security_group_name} already exists")
 
-def assign_floating_ip(conn, server, floating_ip_address):
-    """Assign a floating IP to a server."""
-    if server is None:
-        print("Server is not found. Floating IP assignment aborted.")
-        return
+#     # Cleanup existing files
+    file_names = [f"{tag_name}_{file}" for file in [sshconfig, knownhosts, hostsfile]]
+    for file in file_names:
+        if os.path.exists(file):
+            os.remove(file)
 
-    if server.status != 'ACTIVE':
-        print(f"Server {server.name} is not yet active, waiting for it to become active...")
-        server = conn.compute.wait_for_server(server)
-        if server.status != 'ACTIVE':
-            print(f"Server {server.name} failed to become active. Floating IP assignment aborted.")
-            return
+        # Create bastion server
+    existing_servers, _ = run_command("openstack server list --status ACTIVE --column Name -f value")
 
-    floating_ip = conn.network.find_ip(floating_ip_address)
-    if floating_ip and not floating_ip.fixed_ip_address:
-        conn.compute.add_floating_ip_to_server(server, floating_ip.floating_ip_address)
-        print(f"Floating IP {floating_ip_address} successfully assigned to server {server.name}.")
+    if bastion_server in existing_servers:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {bastion_server} already exists")
+        bastion_fip, _ = run_command(f"openstack floating ip list --port {tag_name}_vip --column 'Floating IP Address' | awk 'NR==1 {{print $2}}'")
     else:
-        print(f"Floating IP {floating_ip_address} is already in use or not found.")
+        bastion_fip = create_and_assign_fip(bastion_server, keypair_name, '1C-2GB-50GB', network_name, security_group_name)
 
-
-def create_server(conn, name, image_name, flavor_name, network_name, key_name, security_group_name, floating_ip=None):
-    """Create or reuse a server."""
-    server = conn.compute.find_server(name)
-    if server:
-        log(f"{datetime.now()} {name} already exists")
+    # Create HAproxy server
+    if haproxy_server in existing_servers:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {haproxy_server} already exists")
+        haproxy_fip, _ = run_command(f"openstack floating ip list --port {tag_name}_vip --column 'Floating IP Address' | awk 'NR==2 {{print $2}}'")
     else:
-        image = conn.compute.find_image(image_name)
-        if not image:
-            log(f"{datetime.now()} Error: Image '{image_name}' not found.")
-            return
+        haproxy_fip = create_and_assign_fip(haproxy_server, keypair_name, '1C-2GB-50GB', network_name, security_group_name)
 
-        flavor = conn.compute.find_flavor(flavor_name)
-        if not flavor:
-            log(f"{datetime.now()} Error: Flavor '{flavor_name}' not found.")
-            return
+    # Create Backup HAproxy server
+    if haproxy_server2 in existing_servers:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {haproxy_server2} already exists")
+        haproxy_fip2, _ = run_command(f"openstack floating ip list --port {tag_name}_vip --column 'Floating IP Address' | awk 'NR==3 {{print $2}}'")
+    else:
+        haproxy_fip2 = create_and_assign_fip(haproxy_server2, keypair_name, '1C-2GB-50GB', network_name, security_group_name)
+        # Allocate VIP port for HAproxy_server
+    vip_port_haproxy, _ = run_command(f"openstack port create --network {network_name} {haproxy_server}_vip --tag {tag_name} -f json")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {haproxy_server}_vip.")
+    vip_floating_ip_haproxy, _ = run_command(f"openstack floating ip create ext-net -f json | jq -r '.floating_ip_address'")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Allocated floating IP {vip_floating_ip_haproxy} for VIP port.")
+    run_command(f"openstack floating ip set --port {vip_port_haproxy} {vip_floating_ip_haproxy}")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Assigned floating IP {vip_floating_ip_haproxy} to VIP port {haproxy_server}_vip.")
 
-        network = conn.network.find_network(network_name)
-        if not network:
-            log(f"{datetime.now()} Error: Network '{network_name}' not found.")
-            return
+    # Attach VIP port to HAproxy_server
+    run_command(f"openstack server add port {haproxy_server} {vip_port_haproxy}")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Attached VIP port {haproxy_server}_vip to instance {haproxy_server}.")
 
-        server = conn.compute.create_server(
-            name=name,
-            image_id=image.id,
-            flavor_id=flavor.id,
-            networks=[{"uuid": network.id}],
-            key_name=key_name,
-            security_groups=[{"name": security_group_name}]
-        )
+    # Allocate VIP port for HAproxy_server2
+    vip_port_haproxy2, _ = run_command(f"openstack port create --network {network_name} {haproxy_server2}_vip --tag {tag_name} -f json")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {haproxy_server2}_vip.")
+    vip_floating_ip_haproxy2, _ = run_command(f"openstack floating ip create ext-net -f json | jq -r '.floating_ip_address'")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Allocated floating IP {vip_floating_ip_haproxy2} for VIP port.")
+    run_command(f"openstack floating ip set --port {vip_port_haproxy2} {vip_floating_ip_haproxy2}")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Assigned floating IP {vip_floating_ip_haproxy2} to VIP port {haproxy_server2}_vip.")
 
-        server = conn.compute.wait_for_server(server)
-        if not server:
-            log(f"{datetime.now()} Error: Server '{name}' creation failed.")
-            return
+    # Attach VIP port to HAproxy_server2
+    run_command(f"openstack server add port {haproxy_server2} {vip_port_haproxy2}")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Attached VIP port {haproxy_server2}_vip to instance {haproxy_server2}.")
 
-        if floating_ip:
-            try:
-                conn.compute.add_floating_ip_to_server(server, floating_ip)
-                log(f"{datetime.now()} Assigned floating IP {floating_ip} to server {name}")
-            except openstack.exceptions.ResourceNotFound:
-                log(f"{datetime.now()} Error: Failed to assign floating IP {floating_ip} to server {name}")
-        log(f"{datetime.now()} Created server {name}")
+    devservers_count = len([line for line in existing_servers.splitlines() if dev_server in line])
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Will need {required_dev_servers} nodes (server.conf), launching them.")
 
-
+    if required_dev_servers > devservers_count:
+        devservers_to_add = required_dev_servers - devservers_count
+        sequence = devservers_count + 1
+        while devservers_to_add > 0:
+            devserver_name = f"{dev_server}{sequence}"
+            run_command(f"openstack server create --image 'Ubuntu 20.04 Focal Fossa x86_64' {devserver_name} --key-name {keypair_name} --flavor '1C-2GB-50GB' --network {network_name} --security-group {security_group_name}")
+            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created {devserver_name} server")
+            devservers_to_add -= 1
+            sequence += 1
+    elif required_dev_servers < devservers_count:
+        devservers_to_remove = devservers_count - required_dev_servers
+        for _ in range(devservers_to_remove):
+            server_to_delete, _ = run_command(f"openstack server list --status ACTIVE -f value -c Name | grep -m1 -oP '{tag_name}_dev([1-9]+)'")
+            run_command(f"openstack server delete {server_to_delete} --wait")
+            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deleted {server_to_delete} server")
+    else:
+        print(f"Required number of dev servers({required_dev_servers}) already exist.")
+    # Fetch assigned floating IPs for verification
+    bastionfip, _ = run_command(f"openstack server list --name {bastion_server} -c Networks -f value | grep -Po '\\d+\\.\\d+\\.\\d+\\.\\d+' | awk 'NR==2'")
+    haproxy_fip, _ = run_command(f"openstack server show {haproxy_server} -c addresses | grep -Po '\\d+\\.\\d+\\.\\d+\\.\\d+' | awk 'NR==1'")
+    haproxy_fip2, _ = run_command(f"openstack server list --name {haproxy_server2} -c Networks -f value | grep -Po '\\d+\\.\\d+\\.\\d+\\.\\d+' | awk 'NR==1'")
     
-def generate_ssh_config(private_key, bastion_fip, haproxy_fip, haproxy_fip2, dev_servers):
-    """Generate SSH config file."""
-    with open("config", "w") as f:
-        f.write(f"Host bastion\n")
-        f.write(f"  User ubuntu\n")
-        f.write(f"  HostName {bastion_fip}\n")
-        f.write(f"  IdentityFile {private_key}\n")
-        f.write(f"  StrictHostKeyChecking no\n")
-        f.write(f"  PasswordAuthentication no\n\n")
-        f.write(f"Host haproxy\n")
-        f.write(f"  User ubuntu\n")
-        f.write(f"  HostName {haproxy_fip}\n")
-        f.write(f"  IdentityFile {private_key}\n")
-        f.write(f"  StrictHostKeyChecking no\n")
-        f.write(f"  PasswordAuthentication no\n")
-        f.write(f"  ProxyJump bastion\n\n")
-        f.write(f"Host haproxy2\n")
-        f.write(f"  User ubuntu\n")
-        f.write(f"  HostName {haproxy_fip2}\n")
-        f.write(f"  IdentityFile {private_key}\n")
-        f.write(f"  StrictHostKeyChecking no\n")
-        f.write(f"  PasswordAuthentication no\n")
-        f.write(f"  ProxyJump bastion\n\n")
-        for dev in dev_servers:
-            f.write(f"Host {dev['name']}\n")
-            f.write(f"  User ubuntu\n")
-            f.write(f"  HostName {dev['ip']}\n")
-            f.write(f"  IdentityFile {private_key}\n")
-            f.write(f"  StrictHostKeyChecking no\n")
-            f.write(f"  PasswordAuthentication no\n")
-            f.write(f"  ProxyJump bastion\n\n")
-
-def generate_hosts_file(bastion_name, haproxy_name, haproxy_name2, dev_servers, private_key):
-    """Generate Ansible hosts file."""
-    with open("hosts", "w") as f:
-        f.write("[bastion]\n")
-        f.write(f"{bastion_name}\n\n")
-        f.write("[HAproxy]\n")
-        f.write(f"{haproxy_name}\n")
-        f.write(f"{haproxy_name2}\n\n")
-        f.write("[webservers]\n")
-        for dev in dev_servers:
-            f.write(f"{dev['name']}\n")
-        f.write("\n[primary_proxy]\n")
-        f.write(f"{haproxy_name}\n\n")
-        f.write("[secondary_proxy]\n")
-        f.write(f"{haproxy_name2}\n")
-
-def main():
-    # Argument parsing
-    parser = argparse.ArgumentParser(description="OpenStack Deployment Script")
-    parser.add_argument("rc_file", help="Path to the OpenStack RC file")
-    parser.add_argument("tag", help="Tag name to be appended to resources")
-    parser.add_argument("public_key", help="Path to the public key file")
-    parser.add_argument("private_key", help="Path to the private key file")
-    args = parser.parse_args()
-
-    # Source the OpenStack RC file
-    source_rc_file(args.rc_file)
-
-    # Print environment variables for debugging
-    for var in ["OS_AUTH_URL", "OS_PROJECT_ID", "OS_PROJECT_NAME", "OS_USER_DOMAIN_NAME", "OS_USERNAME", "OS_PASSWORD", "OS_REGION_NAME", "OS_INTERFACE", "OS_IDENTITY_API_VERSION"]:
-        print(f"{var}={os.getenv(var)}")
-
-    # Initialize connection
-    conn = openstack.connect(
-        auth_url=os.getenv('OS_AUTH_URL'),
-        project_name=os.getenv('OS_PROJECT_NAME'),
-        username=os.getenv('OS_USERNAME'),
-        password=os.getenv('OS_PASSWORD'),
-        user_domain_name=os.getenv('OS_USER_DOMAIN_NAME'),
-        project_domain_name=os.getenv('OS_PROJECT_DOMAIN_NAME')
-    )
-
-    # Variables
-    keypair_name = f"{args.tag}_keypair"
-    network_name = f"{args.tag}_ha-net"
-    subnet_name = f"{args.tag}_ha-net-subnet"
-    router_name = f"{args.tag}_ha-router"
-    security_group_name = f"{args.tag}_ha-sec-group"
-    bastion_name = f"{args.tag}_bastion"
-    haproxy_name = f"{args.tag}_ha-proxy"    
-    network_name = f"{args.tag}_network"
-    subnet_name = f"{network_name}_subnet"
-    router_name = f"{network_name}_router"
-    cidr = "192.168.1.0/24"
-    image_name = "Ubuntu 20.04 Focal Fossa x86_64"
-    flavor_name = "1C-2GB-50GB"
-    security_group_name = f"{args.tag}_sec_group"
-
-    log("Starting deployment")
-
-    # Check and allocate floating IPs
-    available_fips = list(conn.network.ips(status='DOWN'))
-    log(f"Checking if we have floating IPs available, we have {len(available_fips)} available.")
-    if len(available_fips) < 2:
-        log("Allocating floating IPs")
-        fip1 = create_or_get_floating_ip(conn, 'ext-net')
-        fip2 = create_or_get_floating_ip(conn, 'ext-net')
-        log(f"Allocating floating IP {fip1}, {fip2}. Done")
-    else:
-        fip1 = available_fips[0].floating_ip_address
-        fip2 = available_fips[1].floating_ip_address
-
-    log("Checking if we have keypair available.")
-    keypair = conn.compute.find_keypair(keypair_name)
-    if not keypair:
-        keypair = conn.compute.create_keypair(name=keypair_name)
-        log(f"Added {keypair_name} associated with {keypair_name}.")
+    active_servers = [server.name for server in conn.compute.servers()]
+    # Print instance name along with floating IP and fixed IP
+    print(f"Bastion Server:")
+    print(f"Instance Name: {bastion_server}")
+    print(f"Floating IP: {bastionfip}")
     
-    # Create network resources
-    create_network_resources(conn, network_name, subnet_name, router_name, cidr, security_group_name)
-
-    # Select image
-    images = [image.name for image in conn.compute.images()]
-    log(f"Detecting suitable image, looking for {image_name}; available images: {images}")
-    if image_name in images:
-        log(f"Selected: {image_name}")
-
-    # Create servers
-    bastion_name = f"{args.tag}_bastion"
-    create_server(conn, bastion_name, image_name, flavor_name, network_name, keypair_name, security_group_name, fip1)
-    haproxy_name = f"{args.tag}_proxy"
-    create_server(conn, haproxy_name, image_name, flavor_name, network_name, keypair_name, security_group_name, fip2)
-
-    # Simulate waiting for nodes to complete installation
-    log("Waiting for nodes to complete their installation.")
-    time.sleep(15)
-    log("All nodes are done.")
-
-    # Build SSH config file
-    log(f"Building base SSH config file, saved to {args.tag}_SSHconfig")
-    # This is a placeholder. Implement SSH config file creation as needed.
-
-    # Run playbook
-    log("Running playbook.")
-    # This is a placeholder. Implement playbook execution as needed.
-    log("Done, solution has been deployed.")
-
-    # Validate the deployment
-    log("Validates operation.")
-    log("Request1: …node2")
-    log("Request2: …node1")
-    log("Request3: …node3")
-    log("OK")
-
+    print(f"HAproxy Server:")
+    print(f"Instance Name: {haproxy_server}")
+    print(f"Floating IP: {haproxy_fip}")
+    
+    print(f"HAproxy2 Server:")
+    print(f"Instance Name: {haproxy_server2}")
+    print(f"Floating IP: {haproxy_fip2}")
+    
+    subprocess.run(["python","rc_file" "tag_name" "gen_config.py"])
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1], sys.argv[2], sys.argv[3]) 
+#The script is designed to be executed from the command line and accepts three arguments: the path to the OpenStack RC file, a tag name, and the path to the public key file.
