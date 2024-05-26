@@ -5,6 +5,7 @@ import time
 import os
 import openstack.connection
 import openstack.exceptions
+import json
 # Create connection to OpenStack
 conn = openstack.connect(
     auth_url=os.getenv('OS_AUTH_URL'),
@@ -56,12 +57,46 @@ def create_and_assign_fip(server, keypair_name, flavor, network_name, security_g
     else:
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Error: {server} did not become active or network not ready.")
         return None
+    
+def check_existing_keypair(keypair_name):
+    existing_keypairs = subprocess.check_output(["openstack", "keypair", "list", "-f", "value", "--column", "Name"]).decode("utf-8")
+    return keypair_name in existing_keypairs.splitlines()
+
+def create_openstack_keypair(keypair_name, public_key_file):
+    if check_existing_keypair(keypair_name):
+        print(f"Key pair '{keypair_name}' already exists.")
+        return
+    # Import the public key into OpenStack
+    subprocess.run(["openstack", "keypair", "create", "--public-key", public_key_file, keypair_name])
+    # Download the private key file (.pem)
+    private_key_file_path = os.path.expanduser(f"~/.ssh/{keypair_name}.pem")
+    with open(private_key_file_path, "w") as private_key_file:
+        subprocess.run(["openstack", "keypair", "show", keypair_name, "-f", "value", "--column", "Private Key"], stdout=private_key_file)
+
+    print(f"Key pair '{keypair_name}' created successfully and private key saved to '{private_key_file_path}'.")
 def generate_configs():
     """
     Invoke gen_config.py to generate SSH config and Ansible hosts file.
     """
     print("Generating configuration files...")
     run_command("python3 gen_config.py")
+def run_ansible_playbook():
+    """
+    Run the Ansible playbook using the generated configuration files.
+    """
+    print("Running Ansible playbook...")
+    ansible_command = "ansible-playbook -i hosts site.yaml --ssh-common-args='-F ssh_config'"
+    subprocess.run(ansible_command, shell=True)
+
+def get_port_by_name(port_name):
+    ports_list, _ = run_command(f"openstack port list -f json")
+    ports = json.loads(ports_list)
+    
+    for port in ports:
+        if port['Name'] == port_name:
+            return port['ID']  
+    return None
+
 
 def main(rc_file, tag_name, publickey):
     privatekey = publickey.replace('.pub', '')
@@ -78,7 +113,6 @@ def main(rc_file, tag_name, publickey):
                 
     network_name = f"{tag_name}_network"
     subnet_name = f"{tag_name}_subnet"
-    keypair_name = f"{tag_name}_key"
     router_name = f"{tag_name}_router"
     security_group_name = f"{tag_name}_security_group"
     haproxy_server = f"{tag_name}_HAproxy"
@@ -90,17 +124,15 @@ def main(rc_file, tag_name, publickey):
     knownhosts = "known_hosts"
     hostsfile = "hosts"
     
+    keypair_name = f"{tag_name}_key"
+    public_key_file = f"{tag_name}_key.pub"
+
+    check_existing_keypair(keypair_name)
+    create_openstack_keypair(keypair_name, public_key_file)
+
     floating_ips, _ = run_command("openstack floating ip list --status DOWN -f value -c 'Floating IP Address'")
     for ip in floating_ips.splitlines():
         run_command(f"openstack floating ip delete {ip}")
-    # Keypair check
-    existing_keypairs, _ = run_command("openstack keypair list -f value --column Name")
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Checking if we have {keypair_name} available.")
-    if keypair_name in existing_keypairs:
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {keypair_name} already exists")
-    else:
-        run_command(f"openstack keypair create --public-key {publickey} {keypair_name}")
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Adding {keypair_name} associated with {publickey}.")
 
     # Network check
     existing_networks, _ = run_command(f"openstack network list --tag {tag_name} --column Name -f value")
@@ -184,9 +216,15 @@ def main(rc_file, tag_name, publickey):
         haproxy_fip2, _ = run_command(f"openstack floating ip list --port {tag_name}_vip --column 'Floating IP Address' | awk 'NR==3 {{print $2}}'")
     else:
         haproxy_fip2 = create_and_assign_fip(haproxy_server2, keypair_name, '1C-2GB-50GB', network_name, security_group_name)
-        # Allocate VIP port for HAproxy_server
-    vip_port_haproxy, _ = run_command(f"openstack port create --network {network_name} {haproxy_server}_vip --tag {tag_name} -f json")
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {haproxy_server}_vip.")
+    # Allocate VIP port for HAproxy_server
+    vip_port_haproxy = get_port_by_name(f"{haproxy_server}_vip")
+    if not vip_port_haproxy:
+        vip_port_haproxy, _ = run_command(f"openstack port create --network {network_name} {haproxy_server}_vip --tag {tag_name} -f json")
+        vip_port_haproxy = json.loads(vip_port_haproxy)['id']
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {haproxy_server}_vip.")
+    else:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {haproxy_server}_vip already exists with ID {vip_port_haproxy}.")
+
     vip_floating_ip_haproxy, _ = run_command(f"openstack floating ip create ext-net -f json | jq -r '.floating_ip_address'")
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Allocated floating IP {vip_floating_ip_haproxy} for VIP port.")
     run_command(f"openstack floating ip set --port {vip_port_haproxy} {vip_floating_ip_haproxy}")
@@ -197,8 +235,14 @@ def main(rc_file, tag_name, publickey):
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Attached VIP port {haproxy_server}_vip to instance {haproxy_server}.")
 
     # Allocate VIP port for HAproxy_server2
-    vip_port_haproxy2, _ = run_command(f"openstack port create --network {network_name} {haproxy_server2}_vip --tag {tag_name} -f json")
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {haproxy_server2}_vip.")
+    vip_port_haproxy2 = get_port_by_name(f"{haproxy_server2}_vip")
+    if not vip_port_haproxy2:
+        vip_port_haproxy2, _ = run_command(f"openstack port create --network {network_name} {haproxy_server2}_vip --tag {tag_name} -f json")
+        vip_port_haproxy2 = json.loads(vip_port_haproxy2)['id']
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {haproxy_server2}_vip.")
+    else:
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {haproxy_server2}_vip already exists with ID {vip_port_haproxy2}.")
+
     vip_floating_ip_haproxy2, _ = run_command(f"openstack floating ip create ext-net -f json | jq -r '.floating_ip_address'")
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Allocated floating IP {vip_floating_ip_haproxy2} for VIP port.")
     run_command(f"openstack floating ip set --port {vip_port_haproxy2} {vip_floating_ip_haproxy2}")
@@ -207,6 +251,7 @@ def main(rc_file, tag_name, publickey):
     # Attach VIP port to HAproxy_server2
     run_command(f"openstack server add port {haproxy_server2} {vip_port_haproxy2}")
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Attached VIP port {haproxy_server2}_vip to instance {haproxy_server2}.")
+
 
     devservers_count = len([line for line in existing_servers.splitlines() if dev_server in line])
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Will need {required_dev_servers} nodes (server.conf), launching them.")
@@ -248,6 +293,9 @@ def main(rc_file, tag_name, publickey):
     print(f"Floating IP: {haproxy_fip2}")
     
     generate_configs()
+    run_ansible_playbook()
+
+
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
 if __name__ == "__main__":
     main(sys.argv[1], sys.argv[2], sys.argv[3]) 
