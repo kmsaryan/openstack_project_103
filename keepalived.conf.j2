@@ -1,4 +1,3 @@
-
 vrrp_instance VI_1 {
     state {{ node_state }}
     interface ens3
@@ -7,8 +6,8 @@ vrrp_instance VI_1 {
     advert_int 1
     
     virtual_ipaddress {
-        {{ virtual_ip }}/24
+        {% for ip in virtual_ips %}
+        {{ ip }}/24
+        {% endfor %}
     }
-    
-  }
 }
