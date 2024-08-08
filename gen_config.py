@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 
-"""this file contains the script to generate the ssh_config and hosts file"""
 import subprocess
 import json
 import os
+import sys
+import time
+
 def run_command(command):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     output, error = process.communicate()
     if process.returncode != 0:
         print(f"Error executing command: {command}\n{error.decode()}")
+        sys.exit(1)
     return output.decode()
 
 def fetch_internal_ips():
-    """
-    Fetch internal IPs
-    """
     command = "openstack server list -f json"
     output = run_command(command)
     servers = json.loads(output)
@@ -23,93 +23,129 @@ def fetch_internal_ips():
         server_name = server['Name']
         if 'Networks' in server:
             networks = server['Networks']
-            for network_name, ips in networks.items():
-                for ip in ips:
-                    if ip.startswith('10.'):  # Ensure we get internal IP (e.g., 10.x.x.x)
-                        internal_ips[server_name] = ip
+            if isinstance(networks, dict):
+                for network_name, ips in networks.items():
+                    if isinstance(ips, list):
+                        for ip in ips:
+                            if ip.startswith('10.'): 
+                                internal_ips[server_name] = ip
     return internal_ips
 
-def fetch_floating_ips():
-    """
-    Fetch floating IPs
-    """
-    command = "openstack floating ip list -f json"
-    output = run_command(command)
-    fips = json.loads(output)
-    fip_map = {fip['Fixed IP Address']: fip['Floating IP Address'] for fip in fips if fip['Fixed IP Address']}
+def read_fip_file(file_path):
+    fip_map = {}
+    with open(file_path, 'r') as f:
+        for line in f:
+            server_name, fip = line.strip().split(': ')
+            fip_map[server_name] = fip
     return fip_map
 
 def generate_ssh_config(internal_ips, fip_map, tag_name):
-    """
-    Generate SSH config file
-    """
     ssh_config_path = os.path.expanduser("~/.ssh/config")
-    with open('ssh_config', 'w') as f:
+    bastion_name = f"{tag_name}_bastion"
+    haproxy_server = f"{tag_name}_HAproxy"
+    haproxy_server2 = f"{tag_name}_HAproxy2"
+    bastion_fip = fip_map.get(bastion_name, "")
+    haproxy_fip1=fip_map.get(haproxy_server, "")
+    haproxy_fip2=fip_map.get(haproxy_server2, "")
+    with open(ssh_config_path, 'w') as f:
         f.write("Host *\n")
         f.write("\tUser ubuntu\n")
+        f.write(f"\tIdentityFile ~/.ssh/{tag_name}_key.pem\n")
         f.write("\tStrictHostKeyChecking no\n")
         f.write("\tPasswordAuthentication no\n")
+        f.write("\tServerAliveInterval 60\n\n")
         f.write("\tForwardAgent yes\n")
         f.write("\tControlMaster auto\n")
         f.write("\tControlPath ~/.ssh/ansible-%r@%h:%p\n")
-        f.write("\tControlPersist yes\n")
-        f.write("\tProxyCommand ssh -W %h:%p bastion\n\n")
+        f.write("\tControlPersist yes\n\n")
+
+        if bastion_fip:
+            f.write(f"Host {bastion_name}\n")
+            f.write(f"\tHostName {bastion_fip}\n")
+        if haproxy_fip1:
+            f.write(f"Host {haproxy_server}\n")
+            f.write(f"\tHostName {haproxy_fip1}\n")
+            f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
+        if haproxy_fip2:
+            f.write(f"Host {haproxy_server2}\n")
+            f.write(f"\tHostName {haproxy_fip2}\n")
+            f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
 
         for server_name, internal_ip in internal_ips.items():
             if 'dev' in server_name:
                 f.write(f"Host {server_name}\n")
-                f.write(f"    HostName {internal_ip}\n")
-                f.write(f"    User ubuntu\n")
-                f.write(f"    IdentityFile ~/.ssh/{tag_name}_{server_name}.pem\n\n")
-            elif 'bastion' in server_name or 'HAproxy' in server_name:
-                fip = fip_map.get(internal_ip)
-                if fip:
-                    f.write(f"Host {server_name}\n")
-                    f.write(f"    HostName {fip}\n")
-                    f.write(f"    User ubuntu\n")
-                    f.write(f"    IdentityFile ~/.ssh/{tag_name}_{server_name}.pem\n\n")
+                f.write(f"\tHostName {internal_ip}\n")
+                f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
+
+def generate_ansible_config(tag_name, fip_map, bastion_name):
+    ansible_config_path = os.path.expanduser("~/.ansible.cfg")
+    with open(ansible_config_path, 'w') as f:
+         f.write("[defaults]\n")
+         f.write("inventory = hosts\n")
+         f.write("remote_user = ubuntu\n")
+         f.write("private_key_file = ~/.ssh/{}_key.pem\n".format(tag_name))
+         f.write("host_key_checking = False\n")
+         f.write("control_path = ~/.ssh/ansible-%r@%h:%p\n")
+         f.write("control_master = auto\n")
+         f.write("control_persist = yes\n")
+         f.write("ssh_args = -o ForwardAgent=yes\n")
+         f.write("ansible_ssh_common_args = -o ProxyJump=ubuntu@{}\n".format(fip_map.get(bastion_name, '')))
 
 def generate_host_file(internal_ips, fip_map, tag_name):
-    """
-    Generate host file
-    """
+    ssh_key_path = os.path.expanduser(f"~/.ssh/{tag_name}_key.pem")
+    bastion_name = f"{tag_name}_bastion"
     haproxy_server = f"{tag_name}_HAproxy"
     haproxy_server2 = f"{tag_name}_HAproxy2"
-    bastion_server = f"{tag_name}_bastion"
 
     with open('hosts', 'w') as f:
         f.write("[bastion]\n")
-        f.write(f"{bastion_server} ansible_host={fip_map.get(internal_ips[bastion_server])} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/{tag_name}_key.pem\n\n")
+        if bastion_name in internal_ips:
+            f.write(f"{bastion_name} ansible_host={fip_map.get(bastion_name, '')} ansible_user=ubuntu ansible_ssh_private_key_file={ssh_key_path}\n\n")
 
-        f.write("[haproxy]\n")
+        f.write("[main_proxy]\n")
         if haproxy_server in internal_ips:
-            f.write(f"{haproxy_server} ansible_host={internal_ips[haproxy_server]} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/{tag_name}_key.pem ansible_ssh_common_args='-o ProxyCommand=\"ssh -W %h:%p -i ~/.ssh/{tag_name}_key.pem ubuntu@{fip_map.get(internal_ips[bastion_server])}\"'\n")
+            f.write(f"{haproxy_server} ansible_host={fip_map.get(haproxy_server, '')} ansible_user=ubuntu ansible_ssh_private_key_file={ssh_key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {ssh_key_path}'\n")
+        
+        f.write("\n[standby_proxy]\n")
         if haproxy_server2 in internal_ips:
-            f.write(f"{haproxy_server2} ansible_host={internal_ips[haproxy_server2]} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/{tag_name}_key.pem ansible_ssh_common_args='-o ProxyCommand=\"ssh -W %h:%p -i ~/.ssh/{tag_name}_key.pem ubuntu@{fip_map.get(internal_ips[bastion_server])}\"'\n")
+            f.write(f"{haproxy_server2} ansible_host={fip_map.get(haproxy_server2, '')} ansible_user=ubuntu ansible_ssh_private_key_file={ssh_key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {ssh_key_path}'\n")
+
         f.write("\n[devservers]\n")
         for server_name, internal_ip in internal_ips.items():
             if 'dev' in server_name:
-                f.write(f"{server_name} ansible_host={internal_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/{tag_name}_key.pem ansible_ssh_common_args='-o ProxyCommand=\"ssh -W %h:%p -i ~/.ssh/{tag_name}_key.pem ubuntu@{fip_map.get(internal_ips[bastion_server])}\"'\n")
+                f.write(f"{server_name} ansible_host={internal_ip} ansible_user=ubuntu ansible_ssh_private_key_file={ssh_key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {ssh_key_path}'\n")
 
+def run_ansible_playbook():
+    """
+    Run the Ansible playbook using the generated configuration files.
+    """
+    print("Running Ansible playbook...")
+    ansible_command = "ansible-playbook -i hosts site.yaml"
+    subprocess.run(ansible_command, shell=True)
 
-
-
-def main():
-    command = "openstack floating ip list -f json"
-    output = run_command(command)
-    fips = json.loads(output)
-    fip_map = {fip['Fixed IP Address']: fip['Floating IP Address'] for fip in fips if fip['Fixed IP Address']}
-    tag_name = {"tag_name"}
+def main(tag_name, keypair_name):
     # Fetch internal IPs and floating IPs
     internal_ips = fetch_internal_ips()
-    floating_ips = fetch_floating_ips()
-
+    fip_map = read_fip_file('servers_fip')
     # Print the internal and floating IPs for debugging
     print("Internal IPs:", internal_ips)
-    print("Floating IPs:", floating_ips)
+    print("Floating IPs:", fip_map)
 
     # Generate SSH config file
-    generate_ssh_config(internal_ips, fip_map, tag_name)    # Generate host file
+    generate_ssh_config(internal_ips, fip_map, tag_name)
+    print("Generated SSH config file")
+    generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion")
+    print("Generated Ansible config file")
+    # Generate host file
     generate_host_file(internal_ips, fip_map, tag_name)
+    print("Generated Ansible hosts file")
+    #print("Waiting for 45 seconds before running Ansible playbook...")
+    #time.sleep(45)  # Wait for config to be ready
+    #run_ansible_playbook()
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 3:
+        print("Usage: gen_config.py <tag_name> <keypair_name>")
+        sys.exit(1)
+    
+    main(sys.argv[1], sys.argv[2])
