@@ -186,8 +186,6 @@
       shell: |
         curl https://packages.grafana.com/gpg.key | sudo apt-key add -
         add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
-      args:
-        warn: no
 
     - name: Install the grafana package
       apt:
