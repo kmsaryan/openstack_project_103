@@ -1,26 +1,26 @@
-#!/usr/bin/python3.8
 import openstack
 import os
 import argparse
 import logging
 from datetime import datetime
 import openstack.exceptions
-
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+import subprocess
 from contextlib import contextmanager
+
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
 @contextmanager
 def suppress_logging(log_level):
     root_logger = logging.getLogger()
     original_level = root_logger.getEffectiveLevel()
-    root_logger.setLevel(logging.ERROR)  # Set the logging level to ERROR to suppress INFO messages
+    root_logger.setLevel(logging.ERROR)  
     try:
         yield
     finally:
-        root_logger.setLevel(original_level)  # Restore the original logging level
+        root_logger.setLevel(original_level)  
 
-# Create connection to OpenStack
+
 def connect_to_openstack():
     return openstack.connect(
         auth_url=os.getenv('OS_AUTH_URL'),
@@ -36,11 +36,11 @@ def delete_floating_ips(conn):
     for floating_ip in floating_ips:
         try:
             conn.network.delete_ip(floating_ip)
-            logging.info(f"Deleted floating IP {floating_ip}")
+            logging.info(f"Releasing floating IP {floating_ip.floating_ip_address}")
         except openstack.exceptions.ResourceNotFound:
-            logging.warning(f"Floating IP {floating_ip} not found")
+            logging.warning(f"Floating IP {floating_ip.floating_ip_address} not found")
         except Exception as e:
-            logging.error(f"An error occurred while deleting floating IP {floating_ip}: {e}")
+            logging.error(f"An error occurred while deleting floating IP {floating_ip.floating_ip_address}: {e}")
 
 def delete_servers(conn, server_names, dev_server, devservers_count):
     for server_name in server_names:
@@ -54,7 +54,7 @@ def delete_servers(conn, server_names, dev_server, devservers_count):
         except openstack.exceptions.ResourceNotFound:
             logging.warning(f"{server_name} not found")
 
-    # Delete dev servers
+    
     for i in range(1, devservers_count + 1):
         devserver_name = f"{dev_server}{i}"
         try:
@@ -67,25 +67,23 @@ def delete_servers(conn, server_names, dev_server, devservers_count):
         except openstack.exceptions.ResourceNotFound:
             logging.warning(f"{devserver_name} not found")
 
-
 def delete_ports(conn, port_names):
     for port_name in port_names:
         try:
             port = conn.network.find_port(port_name)
             if port:
                 conn.network.delete_port(port)
-                logging.info(f"Removed {port_name}")
+                logging.info(f"Removing {port_name}")
             else:
                 logging.warning(f"{port_name} not found")
         except openstack.exceptions.ResourceNotFound:
             logging.warning(f"{port_name} not found")
 
-
 def delete_subnets(conn, subnet_names):
     for subnet_name in subnet_names:
         subnet = conn.network.find_subnet(subnet_name)
         if subnet:
-            # Get all ports and filter those associated with the subnet
+            
             all_ports = conn.network.ports()
             ports = [port for port in all_ports if any(fixed_ip['subnet_id'] == subnet.id for fixed_ip in port.fixed_ips)]
             for port in ports:
@@ -95,10 +93,9 @@ def delete_subnets(conn, subnet_names):
                 except openstack.exceptions.ResourceNotFound:
                     logging.warning(f"Port {port.id} not found")
 
-            # Delete subnet
             try:
                 conn.network.delete_subnet(subnet)
-                logging.info(f"Deleted subnet {subnet_name}")
+                logging.info(f"Removing subnet {subnet_name}")
             except openstack.exceptions.ConflictException as e:
                 logging.error(f"Unable to delete subnet {subnet_name}: {e}")
         else:
@@ -108,7 +105,6 @@ def delete_router(conn, router_name):
     try:
         router = conn.network.find_router(router_name)
         if router:
-            # Get all ports and filter those associated with the router
             all_ports = conn.network.ports(device_id=router.id)
             for port in all_ports:
                 conn.network.remove_interface_from_router(router, port_id=port.id)
@@ -119,7 +115,6 @@ def delete_router(conn, router_name):
             logging.warning(f"{router_name} not found")
     except openstack.exceptions.ResourceNotFound:
         logging.warning(f"{router_name} not found")
-
 
 def delete_network(conn, network_name):
     try:
@@ -145,31 +140,41 @@ def delete_security_group(conn, security_group_name):
 
 def delete_keypair(conn, keypair_name):
     try:
-        keypair = conn.compute.find_keypair(keypair_name)
-        if keypair:
-            conn.compute.delete_keypair(keypair)
-            logging.info(f"Removing {keypair_name}")
-        else:
-            logging.warning(f"{keypair_name} not found")
-    except openstack.exceptions.ResourceNotFound:
-        logging.warning(f"{keypair_name} not found")
-import os
+        subprocess.check_output(['openstack', 'keypair', 'delete', keypair_name])
+        logging.info(f"Removing key pair {keypair_name}")
+    except subprocess.CalledProcessError as e:
+        logging.info(f"Error deleting key pair {keypair_name}: {str(e)}")
 
 def delete_files(tag_name):
-    # Define file names
-    sshconfig = "ssh_config"
-    knownhosts ="known_hosts"
-    hostsfile = "hosts"
-
     # List of files to delete
-    files_to_delete = [sshconfig, knownhosts, hostsfile]
-
+    files_to_delete = ['servers_fip', 'vip_address', 'hosts']
     for file_name in files_to_delete:
         try:
             os.remove(file_name)
-            logging.info(f"Deleted {file_name}")
+            logging.info(f"Removing {file_name}")
         except FileNotFoundError:
             logging.warning(f"{file_name} not found")
+
+    key_file = f"~/.ssh/{tag_name}_key.pem"
+    if os.path.exists(os.path.expanduser(key_file)):
+        os.remove(os.path.expanduser(key_file))
+        logging.info(f"Removing {key_file}")
+    else:
+        logging.warning(f"{key_file} not found")
+
+    config_file = "~/.ssh/config"
+    if os.path.exists(os.path.expanduser(config_file)):
+        os.remove(os.path.expanduser(config_file))
+        logging.info("Removing SSH config file")
+    else:
+        logging.warning("SSH config file not found")
+
+    known_hosts_file = "~/.ssh/known_hosts"
+    if os.path.exists(os.path.expanduser(known_hosts_file)):
+        os.remove(os.path.expanduser(known_hosts_file))
+        logging.info("Removing known_hosts file")
+    else:
+        logging.warning("known_hosts file not found")
 
 def cleanup_instances(conn, tag_name):
     network_name = f"{tag_name}_network"
@@ -181,16 +186,16 @@ def cleanup_instances(conn, tag_name):
     haproxy_server2 = f"{tag_name}_HAproxy2"
     bastion_server = f"{tag_name}_bastion"
     dev_server = f"{tag_name}_dev"
-    devservers_count = 3
+    devservers_count = len(list(conn.compute.servers(name=dev_server)))
     vip_port = f"{tag_name}_vip"
 
-    logging.info(f"Cleaning up {tag_name}")
+    logging.info(f"$> cleanup {tag_name}")
+    logging.info(f"Cleaning up {tag_name} using myRC")
     logging.info(f"We have {len([bastion_server, haproxy_server, haproxy_server2, dev_server])} nodes releasing them")
-        # Suppress log messages for deleting floating IPs
+
     with suppress_logging(logging.INFO):
         delete_floating_ips(conn)
 
-    delete_floating_ips(conn)
     delete_servers(conn, [bastion_server, haproxy_server, haproxy_server2], dev_server, devservers_count)
     delete_ports(conn, [vip_port])
     delete_router(conn, router_name)
@@ -199,6 +204,7 @@ def cleanup_instances(conn, tag_name):
     delete_security_group(conn, security_group_name)
     delete_keypair(conn, keypair_name)
     delete_files(tag_name)
+
     instances = conn.compute.servers()
     instance_names = set()
     for instance in instances:
@@ -208,27 +214,21 @@ def cleanup_instances(conn, tag_name):
                 conn.compute.delete_server(instance)
             else:
                 instance_names.add(instance.name)
-    # Check for resources in the project
+
     logging.info(f"Checking for {tag_name} in project.")
     logging.info("(network)(subnet)(router)(security groups)(keypairs)")
     logging.info("Cleanup done.")
 
-# Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('rc_file', help='OpenStack RC file')
 parser.add_argument('tag_name', help='Tag name for resources')
 parser.add_argument('publickey', help='Public key file')
 args = parser.parse_args()
 
-# Load OpenStack RC file
 with open(args.rc_file) as f:
     for line in f:
         if line.strip() and not line.startswith('#'):
             key, value = line.split('=', 1)
             os.environ[key.strip()] = value.strip()
-
-# Create connection to OpenStack
 conn = connect_to_openstack()
-
-# Cleanup instances
 cleanup_instances(conn, args.tag_name)
