@@ -1,4 +1,4 @@
-#!/usr/bin/python3.8
+#!/usr/bin/python3
 
 import subprocess
 import json
@@ -115,37 +115,22 @@ def generate_host_file(internal_ips, fip_map, tag_name):
             if 'dev' in server_name:
                 f.write(f"{server_name} ansible_host={internal_ip} ansible_user=ubuntu ansible_ssh_private_key_file={ssh_key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {ssh_key_path}'\n")
 
-def run_ansible_playbook():
-    """
-    Run the Ansible playbook using the generated configuration files.
-    """
-    print("Running Ansible playbook...")
-    ansible_command = "ansible-playbook -i hosts site.yaml"
-    subprocess.run(ansible_command, shell=True)
 
 def main(tag_name, keypair_name):
-    # Fetch internal IPs and floating IPs
+
     internal_ips = fetch_internal_ips()
     fip_map = read_fip_file('servers_fip')
-    # Print the internal and floating IPs for debugging
     print("Internal IPs:", internal_ips)
     print("Floating IPs:", fip_map)
-
-    # Generate SSH config file
     generate_ssh_config(internal_ips, fip_map, tag_name)
     print("Generated SSH config file")
     generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion")
     print("Generated Ansible config file")
-    # Generate host file
     generate_host_file(internal_ips, fip_map, tag_name)
     print("Generated Ansible hosts file")
-    #print("Waiting for 45 seconds before running Ansible playbook...")
-    #time.sleep(45)  # Wait for config to be ready
-    #run_ansible_playbook()
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage: gen_config.py <tag_name> <keypair_name>")
         sys.exit(1)
-    
     main(sys.argv[1], sys.argv[2])
