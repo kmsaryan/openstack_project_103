@@ -4,7 +4,7 @@ import subprocess
 import json
 import os
 import sys
-import time
+import datetime
 
 def run_command(command):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -120,14 +120,13 @@ def main(tag_name, keypair_name):
 
     internal_ips = fetch_internal_ips()
     fip_map = read_fip_file('servers_fip')
-    print("Internal IPs:", internal_ips)
-    print("Floating IPs:", fip_map)
+    
     generate_ssh_config(internal_ips, fip_map, tag_name)
-    print("Generated SSH config file")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Generated SSH config file")
     generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion")
-    print("Generated Ansible config file")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Generated Ansible config file")
     generate_host_file(internal_ips, fip_map, tag_name)
-    print("Generated Ansible hosts file")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Generated Ansible hosts file")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
