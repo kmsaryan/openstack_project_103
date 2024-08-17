@@ -1,0 +1,44 @@
+#!/bin/bash
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <openrc> <tag> <ssh_key>"
+    exit 1
+fi
+
+OPENRC=$1
+TAG=$2
+SSH_KEY=$3
+
+# Function to check and install necessary dependencies
+install_dependencies() {
+    echo "Checking and installing necessary dependencies..."
+    if ! command -v python3 &> /dev/null; then
+        sudo apt update
+        sudo apt install -y python3
+    fi
+    if ! command -v pip3 &> /dev/null; then
+        sudo apt install -y python3-pip
+    fi
+    if ! command -v openstack &> /dev/null; then
+        sudo apt install -y python3-openstackclient
+    fi
+    if ! command -v ansible &> /dev/null; then
+        sudo add-apt-repository --yes --update ppa:ansible/ansible
+        sudo apt install -y ansible
+    fi
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
+}
+
+# Function to set up permissions
+setup_permissions() {
+    chmod 777 scripts/cleanup.py
+}
+
+# Function to invoke the Python script
+invoke_python_script() {
+    python3 scripts/cleanup.py $OPENRC $TAG $SSH_KEY
+}
+
+# Main script execution
+install_dependencies
+setup_permissions
+invoke_python_script

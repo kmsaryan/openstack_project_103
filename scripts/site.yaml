@@ -1,0 +1,290 @@
+---
+- hosts: all
+  gather_facts: true
+  become: true
+  become_user: root
+  vars:
+    node_exporter_version: 1.1.2
+  tasks:
+    - name: apt update
+      apt:
+        update_cache: true
+      
+    - name: download node exporter
+      get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+        dest: /tmp
+    - name: unarchive node exporter
+      unarchive:
+        remote_src: true
+        src: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+        dest: /tmp
+    - name: move node exporter to /usr/local/bin
+      copy:
+        src: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        remote_src: true
+        owner: root
+        group: root
+        mode: 0755
+    - name: install unit file to systemd
+      template:
+        src: ../configurations/node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        owner: root
+        group: root
+        mode: 0600
+    - name: configure systemd to use service
+      systemd:
+        daemon_reload: true
+        enabled: true
+        state: started
+        name: node_exporter.service
+
+- name: Configuring HAproxy loadbalancer
+  hosts: main_proxy standby_proxy
+  become: true
+  tasks:
+    - name: Installing HAproxy
+      apt:
+        name: haproxy
+        state: present
+        update_cache: true
+      
+    - name: Installing keepalived
+      apt:
+        name: keepalived
+        state: present
+        update_cache: true
+
+    - name: sudo sysctl -w net.ipv4.ip_nonlocal_bind=1
+      become: true
+      shell: sysctl -w net.ipv4.ip_nonlocal_bind=1
+
+    - name: gather server ip addresses
+      setup:
+        filter: ansible_default_ipv4.address
+
+    - name: copy files haproxy.cfg
+      template:
+        src: ../configurations/haproxy.cfg.j2
+        dest: "/etc/haproxy/haproxy.cfg"
+      notify:
+        - restart haproxy
+
+    - name: install nginx, snmpd, snmp-mibs-downloader
+      apt: 
+        update_cache: true
+        name: [ 'nginx', 'snmpd', 'snmp', 'snmp-mibs-downloader' ] 
+        state: present
+
+    - name: copy nginx config files
+      template:
+        src: ../configurations/nginx.conf.j2
+        dest: "/etc/nginx/nginx.conf"
+
+    - name: nginx start
+      service:
+        name: nginx
+        state: restarted
+
+    - name: copy snmpd config files
+      template:
+        src: ../configurations/snmpd.conf.j2
+        dest: "/etc/snmp/snmpd.conf"
+
+    - name: snmpd start
+      service:
+        name: snmpd
+        state: restarted
+
+  handlers:
+    - name: restart haproxy
+      service:
+        name: haproxy
+        state: restarted
+
+    - name: restart keepalived
+      service:
+        name: keepalived
+        state: restarted
+
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: restart snmpd
+      service:
+        name: snmpd
+        state: restarted
+
+    - name: Set virtual IPs
+      set_fact:
+        virtual_ips: "{{ lookup('file', '../scripts/vip_address') | regex_findall('([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)') }}"
+
+    - name: Set node state and priority
+      set_fact:
+        node_state: "{{ 'MASTER' if inventory_hostname == groups['main_proxy'][0] else 'BACKUP' }}"
+        node_priority: "{{ 101 if inventory_hostname == groups['main_proxy'][0] else 100 }}"
+
+    - name: configure keepalived
+      template:
+        src: ../configurations/keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+      vars:
+        virtual_ip: "{{ virtual_ips[0] }}"
+
+    - name: start keepalived
+      service:
+        name: keepalived
+        state: started
+        enabled: true
+
+- hosts: devservers
+  become: true
+  tasks:
+    - name: install pip
+      apt:
+        name: python3-pip
+        state: present
+    
+    - name: install flask
+      pip:
+        executable: pip3
+        name: flask
+        state: present
+
+    - name: install gunicorn
+      pip:
+        executable: pip3
+        name: gunicorn
+        state: present
+    
+    - name: verify flask installation
+      command: pip3 show flask
+
+    - name: verify gunicorn installation
+      command: pip3 show gunicorn
+
+    - name: createnew directory
+      file:
+        path: "/home/flask-app/"
+        state: directory
+
+    - name: copy app.py to devservers
+      template:
+        src: "../configurations/service.py"
+        dest: "/home/flask-app/app.py"
+
+    - name: start flask app
+      shell: |
+        cd /home/flask-app/
+        gunicorn --bind 0.0.0.0:5000 app:app&
+
+    - name: install snmpd
+      apt:
+        name: snmpd
+        state: present
+    
+    - name: copy snmpd conf file
+      template:
+        src: ../configurations/snmpd.conf.j2
+        dest: "/etc/snmp/snmpd.conf"
+
+    - name: run snmpd
+      service:
+        name: snmpd
+        state: restarted
+
+- name: Install Grafana and Prometheus on bastion
+  hosts: bastion
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Update apt repo and cache on all Ubuntu boxes
+      apt:
+        update_cache: true
+        force_apt_get: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages on servers
+      apt:
+        upgrade: dist
+        force_apt_get: true
+
+    - name: Install required packages
+      apt:
+        name:
+          - gnupg2
+          - curl
+          - software-properties-common
+          - snmp
+
+    - name: Add the Grafana GPG key
+      shell: |
+        curl https://packages.grafana.com/gpg.key | sudo apt-key add -
+        add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
+
+    - name: Install the grafana package
+      apt:
+        name: grafana
+        state: present
+        update_cache: true
+      notify:
+        - Start grafana
+        - Enable grafana
+
+    - name: Add Nginx PPA
+      apt_repository:
+        repo: ppa:nginx/stable
+        state: present
+
+    - name: Ensure Nginx is installed
+      apt:
+        name: nginx
+        state: present
+      notify: Start and Enable Nginx
+
+    - name: Create grafana nginx config file
+      copy:
+        dest: /etc/nginx/conf.d/grafana.conf
+        mode: 0755
+        content: |
+          server {
+            listen 80;
+            server_tokens off;
+            client_max_body_size 10M;
+            server_name grafana1.citizix.com;
+
+            ignore_invalid_headers
+
+    - name: Install Prometheus
+      apt:
+        name: prometheus
+        state: present
+        update_cache: true
+
+    - name: Start Prometheus service
+      service:
+        name: prometheus
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Start grafana
+      systemd:
+        name: grafana-server
+        state: started
+
+    - name: Enable grafana
+      systemd:
+        name: grafana-server
+        enabled: true
+
+    - name: Start and Enable Nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: true
+

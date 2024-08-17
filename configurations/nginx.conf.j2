@@ -1,0 +1,42 @@
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections 768;
+    # multi_accept on;
+}
+
+# Existing UDP configuration
+stream {
+    upstream nginx_udp {
+        {% for host in groups['devservers'] %}
+        server {{ hostvars[host]["ansible_default_ipv4"]["address"] }}:161;
+        {% endfor %}
+    } 
+    server {
+        listen 6000 udp;
+        proxy_pass nginx_udp;
+        proxy_responses 1;
+    }
+}
+
+# New HTTP configuration
+http {
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            root /var/www/html;
+            index index.nginx-debian.html;
+        }
+
+        # Health check endpoint
+        location /health {
+            return 200 'OK';
+            add_header Content-Type text/plain;
+        }
+    }
+}
