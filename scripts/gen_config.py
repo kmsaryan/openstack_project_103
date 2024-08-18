@@ -1,10 +1,7 @@
-#!/usr/bin/python3
-
-import subprocess
-import json
+import openstack
 import os
 import sys
-import time
+import subprocess
 
 def run_command(command):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -14,21 +11,21 @@ def run_command(command):
         sys.exit(1)
     return output.decode()
 
-def fetch_internal_ips():
-    command = "openstack server list -f json"
-    output = run_command(command)
-    servers = json.loads(output)
+def fetch_internal_ips(conn, tag_name):
+    servers = conn.compute.servers(details=True, all_projects=False, filters={"name": f"{tag_name}*"})
     internal_ips = {}
+    
     for server in servers:
-        server_name = server['Name']
-        if 'Networks' in server:
-            networks = server['Networks']
-            if isinstance(networks, dict):
-                for network_name, ips in networks.items():
-                    if isinstance(ips, list):
-                        for ip in ips:
-                            if ip.startswith('10.'): 
-                                internal_ips[server_name] = ip
+        server_name = server.name
+        networks = server.addresses
+        
+        for network_name, ip_list in networks.items():
+            for ip_info in ip_list:
+                ip_address = ip_info['addr']
+                # Check if IP is an internal IP (assuming internal IPs are in the range 10.x.x.x)
+                if ip_address.startswith('10.'):
+                    internal_ips[server_name] = ip_address
+                    
     return internal_ips
 
 def read_fip_file(file_path):
@@ -43,10 +40,7 @@ def read_fip_file(file_path):
 def add_to_known_hosts(ip_address):
     command = f"ssh-keyscan -H {ip_address} >> ~/.ssh/known_hosts"
     result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        print(f"Error adding {ip_address} to known hosts: {result.stderr.decode().strip()}")
-    else:
-        print(f"Added {ip_address} to known hosts.")
+    return result
 
 def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
     bastion_name = f"{tag_name}_bastion"
@@ -87,7 +81,6 @@ def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
                 f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
 
 def generate_ansible_config(tag_name, fip_map, bastion_name, key_path):
-   
     with open('ansible.cfg', 'w') as f:
         f.write("[defaults]\n")
         f.write("inventory = hosts\n")
@@ -101,12 +94,11 @@ def generate_ansible_config(tag_name, fip_map, bastion_name, key_path):
         f.write(f"ansible_ssh_common_args = -o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')}\n")
 
 def generate_host_file(internal_ips, fip_map, tag_name, key_path):
-
     bastion_name = f"{tag_name}_bastion"
     haproxy_server = f"{tag_name}_HAproxy"
     haproxy_server2 = f"{tag_name}_HAproxy2"
 
-    with open( 'hosts', 'w') as f:
+    with open('hosts', 'w') as f:
         f.write("[bastion]\n")
         if bastion_name in internal_ips:
             f.write(f"{bastion_name} ansible_host={fip_map.get(bastion_name, '')} ansible_user=ubuntu ansible_ssh_private_key_file={key_path}\n\n")
@@ -126,13 +118,20 @@ def generate_host_file(internal_ips, fip_map, tag_name, key_path):
 
 def main(tag_name, key_path):
     print(f"Received tag_name: {tag_name}, key_path: {key_path}")
-    internal_ips = fetch_internal_ips()
+    
+    # Establish connection with OpenStack
+    conn = openstack.connect()
+
+    internal_ips = fetch_internal_ips(conn, tag_name)
     fip_map = read_fip_file('servers_fip')
     print("Internal IPs:", internal_ips)
     print("Floating IPs:", fip_map)
     generate_ssh_config(internal_ips, fip_map, tag_name, key_path)
+    print("Generated SSH config.")
     generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion", key_path)
+    print("Generated Ansible config.")
     generate_host_file(internal_ips, fip_map, tag_name, key_path)
+    print("Generated hosts file.")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
