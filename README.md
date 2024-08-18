@@ -18,11 +18,11 @@ This project aims to automate the deployment and management of services within a
 1. Downloads the necessary dependencies and packages required for the installation.
 2. Execute the installation script using the appropriate command or script execution method.
 usage:
-``` ./install <openrc> <tag> <ssh_key>```
+``` ./install <openrc> <tag> <private_key>```
 ### operate.py:
 1. Start and manage the operation of the deployed services within the OpenStack cloud.
 2. Monitor the performance and health of the services to ensure their proper functioning.
-``` ./operate <openrc> <tag> <ssh_key>```
+``` ./operate <openrc> <tag> <private_key>```
 ### cleanup.py:
 1. Clean up and remove any resources or components that are no longer needed or have become obsolete.
 ``` ./clean <openrc> <tag> ```
