@@ -1,4 +1,5 @@
 #!/bin/bash
+#private key is to be given as 3rd argument.
 if [ "$#" -ne 3 ]; then
     echo "Usage: $0 <openrc> <tag> <ssh_key>"
     exit 1
@@ -25,6 +26,7 @@ install_dependencies() {
         sudo add-apt-repository --yes --update ppa:ansible/ansible
         sudo apt install -y ansible
     fi
+
     pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
 }
 
@@ -32,9 +34,11 @@ install_dependencies() {
 setup_permissions() {
     chmod 777 scripts/operate.py
 }
-
 # Function to invoke the Python script
+
 invoke_python_script() {
+    source $OPENRC
+    echo "sourced $OPENRC"
     python3 scripts/operate.py $OPENRC $TAG $SSH_KEY
 }
 
@@ -43,4 +47,4 @@ install_dependencies
 setup_permissions
 invoke_python_script
 
-echo "Installation and configuration completed successfully."
+echo " operate phase complete"

@@ -42,5 +42,5 @@ the command resulted as
 08:59:33 10.10.0.24:45492 -- 10.10.0.23 (test7-dev1) 58 ```
 
 the script accepts the follwoing command line arguments
-``` python3 install.py  <path to rc file> <tag>  <path to id_rsa.pub> ```
+``` python3 install.py  <path to rc file> <tag>  <path to id_rsa> ```
     python3 install.py  madhav.rc tag1  /home/user/.ssh/id_rsa

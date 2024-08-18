@@ -1,4 +1,5 @@
 #!/bin/bash
+#private key is to be given as 3rd argument.
 if [ "$#" -ne 3 ]; then
     echo "Usage: $0 <openrc> <tag> <ssh_key>"
     exit 1
@@ -7,6 +8,7 @@ fi
 OPENRC=$1
 TAG=$2
 SSH_KEY=$3
+
 
 # Function to check and install necessary dependencies
 install_dependencies() {
@@ -25,6 +27,9 @@ install_dependencies() {
         sudo add-apt-repository --yes --update ppa:ansible/ansible
         sudo apt install -y ansible
     fi
+    if ! dpkg-query -W -f='${Status}' software-properties-common 2>/dev/null | grep -q "ok installed"; then
+        sudo apt install -y software-properties-common
+    fi
     pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
 }
 
@@ -36,17 +41,25 @@ setup_permissions() {
     chmod 777 operate
     chmod 777 cleanup
 }
-
 # Function to invoke the Python script
+
+
 invoke_python_script() {
+    source $OPENRC
+    echo "sourced $OPENRC"
+    echo "Executing install.py..."
     python3 scripts/install.py $OPENRC $TAG $SSH_KEY
-    sleep 30
-    ansible-playbook -i hosts scripts/site.yaml
-}
+    sleep 10
+    echo "Generating config file..."
+    python3 scripts/gen_config.py $TAG $SSH_KEY
+    sleep 20 
+    echo " Executing ansible-playbook.."
+    ansible-playbook -i hosts scripts/site.yaml 
+    }
+    exit 1
 
 # Main script execution
 install_dependencies
 setup_permissions
 invoke_python_script
-
-echo "Installation and configuration completed successfully."
+exit 1
