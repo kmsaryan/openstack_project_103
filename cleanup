@@ -6,8 +6,6 @@ fi
 
 OPENRC=$1
 TAG=$2
-SSH_KEY=$3
-
 # Function to check and install necessary dependencies
 install_dependencies() {
     echo "Checking and installing necessary dependencies..."
@@ -35,7 +33,7 @@ setup_permissions() {
 
 # Function to invoke the Python script
 invoke_python_script() {
-    python3 scripts/cleanup.py $OPENRC $TAG $SSH_KEY
+    python3 scripts/cleanup.py $OPENRC $TAG
 }
 
 # Main script execution
