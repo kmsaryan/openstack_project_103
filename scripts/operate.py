@@ -41,16 +41,10 @@ def manage_dev_servers(conn, existing_servers, tag_name, keypair_name, network, 
     if not existing_servers:
         log("No servers retrieved from OpenStack. Please check the connection and server details.")
         return
-
     existing_servers = list(existing_servers)  # Ensure it is a list
-
     devservers_count = len([server for server in existing_servers if server.name.startswith(dev_server_prefix)])
     log(f"Current number of dev servers: {devservers_count}")
     
-    log("Listing all current servers:")
-    for server in existing_servers:
-        log(f"Server found: {server.name}")
-
     if required_dev_servers > devservers_count:
         devservers_to_add = required_dev_servers - devservers_count
         log(f"Need to add {devservers_to_add} dev servers.")
