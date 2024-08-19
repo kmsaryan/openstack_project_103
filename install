@@ -35,7 +35,7 @@ install_dependencies() {
 
 # Function to set up permissions
 setup_permissions() {
-    chmod 777 scripts/install.py
+    chmod 777 scripts/Deploy.py
     chmod 777 scripts/gen_config.py
     chmod 777 scripts/site.yaml
     chmod 777 operate
@@ -47,19 +47,17 @@ setup_permissions() {
 invoke_python_script() {
     source $OPENRC
     echo "sourced $OPENRC"
-    echo "Executing install.py..."
-    python3 scripts/install.py $OPENRC $TAG $SSH_KEY
-    sleep 10
-    echo "Generating config file..."
+    python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY
     python3 scripts/gen_config.py $TAG $SSH_KEY
     sleep 20 
     echo " Executing ansible-playbook.."
     ansible-playbook -i hosts scripts/site.yaml 
     }
-    exit 1
 
 # Main script execution
 install_dependencies
 setup_permissions
 invoke_python_script
 exit 1
+
+echo "Installation and configuration completed successfully."
