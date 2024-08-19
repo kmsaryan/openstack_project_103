@@ -6,7 +6,6 @@ import os
 import sys
 import openstack
 import subprocess
-import json
 from openstack import connection
 
 
@@ -134,16 +133,15 @@ def create_floating_ip(conn, network_name):
     floating_ips = conn.network.ips(floating_network_id=network_name)
     for floating_ip in floating_ips:
         if not floating_ip.port_id:
-            return floating_ip.id, floating_ip.floating_ip_address
-    
+            return  floating_ip.id, floating_ip.floating_ip_address
     external_network = conn.network.find_network(network_name)
     if not external_network:
         raise Exception(f"Network {network_name} not found")
-    
     floating_ip = conn.network.create_ip(floating_network_id=external_network.id)
-    return floating_ip
+    return floating_ip,floating_ip.id, floating_ip.floating_ip_address
 
-def associate_floating_ip(conn, server, floating_ip):
+def associate_floating_ip(conn, server, floating_ip_tuple):
+    floating_ip, floating_ip_id, floating_ip_address = floating_ip_tuple  # Unpack the tuple
     server_instance = conn.compute.find_server(server)
     if not server_instance:
         raise Exception(f"Server {server} not found")
@@ -151,8 +149,9 @@ def associate_floating_ip(conn, server, floating_ip):
     if not server_port:
         raise Exception(f"Port not found for server {server}")
     server_port = server_port[0]
-    conn.network.update_ip(floating_ip.id, port_id=server_port.id)
+    conn.network.update_ip(floating_ip_id, port_id=server_port.id)
     return floating_ip
+
 
 def fetch_server_uuids(conn, image_name, flavor_name, keypair_id, network_id, security_group_id):
     # Fetch image UUID
@@ -171,18 +170,6 @@ def fetch_server_uuids(conn, image_name, flavor_name, keypair_id, network_id, se
         'network_id': network_id,
         'security_group_id': security_group_id
     }
-def create_and_assign_fip(conn, server, network_name):
-    floating_ips = conn.network.ips(floating_network_id=network_name)
-    for floating_ip in floating_ips:
-        if not floating_ip.port_id:
-            return floating_ip.id, floating_ip.floating_ip_address
-    
-    external_network = conn.network.find_network(network_name)
-    if not external_network:
-        raise Exception(f"Network {network_name} not found")
-    
-    floating_ip = conn.network.create_ip(floating_network_id=external_network.id)
-    return floating_ip.floating_ip_address, floating_ip.id
 
 def get_floating_ip(addresses):
     for network, address_list in addresses.items():
@@ -195,80 +182,100 @@ def create_servers(conn, tag_name, image_id, flavor_id, keypair_name, security_g
     fip_map = {}
 
     bastion_server_name = f"{tag_name}_bastion"
+    bastion_port_name=f"{tag_name}_bastion_port"
 
     if bastion_server_name in existing_servers:
         bastion_ser = conn.compute.find_server(bastion_server_name)
+        bastion_port = conn.network.find_port(bastion_port_name)
         fip = get_floating_ip(bastion_ser.addresses)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Bastion server {bastion_server_name} already exists. {fip}")
-        bastion_fip=fip
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Bastion server {bastion_server_name} already exists. {fip}, {bastion_port_name}")
+        bastion_fip = fip
+        fip_map[bastion_server_name] = bastion_fip
+
     else:
+        bastion_port = conn.network.create_port(name=bastion_port_name,network_id=network_id)
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {bastion_port.name} with ID {bastion_port.id}.")
         bastion_server = conn.compute.create_server(
             name=bastion_server_name,
             image_id=image_id,
             flavor_id=flavor_id,
             key_name=keypair_name,
             security_groups=[{'name': security_group_name}],
-            networks=[{"uuid": network_id}]
+            networks=[{"port": bastion_port.id}]
         )
         bastion_server = conn.compute.wait_for_server(bastion_server)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {bastion_server.name} ")
-        bastion_fip = create_floating_ip(conn, "ext-net")
-        associate_floating_ip(conn, bastion_server_name, bastion_fip)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {bastion_server.name} assigned floating IP {bastion_fip.floating_ip_address}.")
-        fip_map[bastion_server_name] = bastion_fip.floating_ip_address
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {bastion_server.name} created.")
+        bastion_fip_tuple = create_floating_ip(conn, "ext-net")
+        associate_floating_ip(conn, bastion_server_name, bastion_fip_tuple)
+        bastion_fip = bastion_fip_tuple[2]  # Use the floating IP address
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {bastion_server.name} assigned floating IP {bastion_fip}.")
+        fip_map[bastion_server_name] = bastion_fip
 
     haproxy_server_name = f"{tag_name}_HAproxy"
+    haproxy_port_name=f"{tag_name}_haproxy_port"
     if haproxy_server_name in existing_servers:
         haproxy_ser = conn.compute.find_server(haproxy_server_name)
+        haproxy_port = conn.network.find_port(haproxy_port_name)
         fip1 = get_floating_ip(haproxy_ser.addresses)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {haproxy_server_name} already exists. {fip1}")
-        haproxy_fip=fip1
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {haproxy_server_name} already exists. {fip1}, {haproxy_port_name}")
+        haproxy_fip = fip1
+        fip_map[haproxy_server_name] = haproxy_fip
+
     else:
+        haproxy_port = conn.network.create_port(name=haproxy_port_name,network_id=network_id)
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {haproxy_port.name} with ID {haproxy_port.id}.")
         haproxy_server = conn.compute.create_server(
             name=haproxy_server_name,
             image_id=image_id,
             flavor_id=flavor_id,
             key_name=keypair_name,
             security_groups=[{'name': security_group_name}],
-            networks=[{"uuid": network_id}]
+            networks=[{"port": haproxy_port.id}]
         )
         haproxy_server = conn.compute.wait_for_server(haproxy_server)
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server.name} created.")
-        haproxy_fip = create_floating_ip(conn, "ext-net")
-        associate_floating_ip(conn, haproxy_server_name, haproxy_fip)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server.name} assigned floating IP {haproxy_fip.floating_ip_address}.")
-        fip_map[haproxy_server_name] = haproxy_fip.floating_ip_address
+        haproxy_fip_tuple = create_floating_ip(conn, "ext-net")
+        associate_floating_ip(conn, haproxy_server_name, haproxy_fip_tuple)
+        haproxy_fip = haproxy_fip_tuple[2]  # Use the floating IP address
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server.name} assigned floating IP {haproxy_fip}.")
+        fip_map[haproxy_server_name] = haproxy_fip
 
     haproxy_server2_name = f"{tag_name}_HAproxy2"
+    haproxy_port2_name=f"{tag_name}_haproxy2_port"
     if haproxy_server2_name in existing_servers:
         haproxy_ser2 = conn.compute.find_server(haproxy_server2_name)
+        haproxy_port2 = conn.network.find_port(haproxy_port2_name)
         server_id = haproxy_ser2.id
         print(f"{server_id}")
         fip2 = get_floating_ip(haproxy_ser2.addresses)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {haproxy_server2_name} already exists. {fip2}")
-        haproxy_fip2=fip2
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {haproxy_server2_name} already exists. {fip2}, {haproxy_port2_name}")
+        haproxy_fip2 = fip2
+        fip_map[haproxy_server2_name] = haproxy_fip2
     else:
+        haproxy_port2 = conn.network.create_port(name=haproxy_port2_name,network_id=network_id )
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {haproxy_port2.name} with ID {haproxy_port2.id}.")
         haproxy_server2 = conn.compute.create_server(
             name=haproxy_server2_name,
             image_id=image_id,
             flavor_id=flavor_id,
             key_name=keypair_name,
             security_groups=[{'name': security_group_name}],
-            networks=[{"uuid": network_id}]
+            networks=[{"port": haproxy_port2.id}]
         )
         haproxy_server2 = conn.compute.wait_for_server(haproxy_server2)
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server2.name} created.")
-        haproxy_fip2 = create_floating_ip(conn, "ext-net")
-        associate_floating_ip(conn, haproxy_server2_name, haproxy_fip2)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server2.name} assigned floating IP {haproxy_fip2.floating_ip_address}.")
-        fip_map[haproxy_server2_name] = haproxy_fip2.floating_ip_address
-        server_id = haproxy_server2.id  # Capture the server_id for the newly created server
-    
+        haproxy_fip2_tuple = create_floating_ip(conn, "ext-net")
+        associate_floating_ip(conn, haproxy_server2_name, haproxy_fip2_tuple)
+        haproxy_fip2 = haproxy_fip2_tuple[2]  # Use the floating IP address
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server2.name} assigned floating IP {haproxy_fip2}.")
+        fip_map[haproxy_server2_name] = haproxy_fip2
+        server_id = haproxy_server2.id  # Capture the server_id for the newly created server    
     return fip_map, server_id
 
 def manage_dev_servers(conn, existing_servers, tag_name, image_id, flavor_id, keypair_name, security_group_name, network_id):
     dev_ips = {}
     dev_server = f"{tag_name}_dev"
+    dev_port_name = f"{tag_name}_dev_port"
     required_dev_servers = 3
     devservers_count = len([line for line in existing_servers.splitlines() if dev_server in line])
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Will need {required_dev_servers} node, launching them.")        
@@ -277,14 +284,15 @@ def manage_dev_servers(conn, existing_servers, tag_name, image_id, flavor_id, ke
         sequence = devservers_count + 1
         while devservers_to_add > 0:
             devserver_name = f"{dev_server}{sequence}"
+            dev_port_n= f"{dev_port_name}{sequence}"
+            dev_port = conn.network.create_port(name=dev_port_n,network_id=network_id)
             server = conn.compute.create_server(
                 name=devserver_name,
                 image_id=image_id,
                 flavor_id=flavor_id,
                 key_name=keypair_name,
                 security_groups=[{'name': security_group_name}],
-                networks=[{"uuid": network_id}]
-            )
+                networks=[{"port":dev_port.id}])
             server = conn.compute.wait_for_server(server)
             print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created {devserver_name} server")
             if network_id in server.addresses and server.addresses[network_id]:
@@ -330,33 +338,39 @@ def assign_floating_ip_to_port(conn, vip_port):
     if vip_port is None:
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port is None, cannot assign floating IP.")
         return None
-    
-    floating_ip_id, floating_ip_address = create_floating_ip(conn, "ext-net")
-    if floating_ip_id is None:
+    # Convert the generator to a list
+    existing_floating_ips = list(conn.network.ips(port_id=vip_port.id))
+    if existing_floating_ips:
+        existing_floating_ip = existing_floating_ips[0]
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {vip_port.id} already has floating IP {existing_floating_ip.floating_ip_address}.")
+        return existing_floating_ip.floating_ip_address, existing_floating_ip.id
+    floating_ip_tuple = create_floating_ip(conn, "ext-net")
+    if floating_ip_tuple[1] is None:  # Check the floating IP ID
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Failed to create floating IP.")
         return None
-    
-    conn.network.update_ip(floating_ip_id, port_id=vip_port.id)
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Associated floating IP {floating_ip_address} with port {vip_port.id}.")
-    return floating_ip_address, floating_ip_id
+    conn.network.update_ip(floating_ip_tuple[1], port_id=vip_port.id)  # Use the floating IP ID
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Associated floating IP {floating_ip_tuple[2]} with port {vip_port.id}.")  # Use the floating IP address
+    return floating_ip_tuple[2], floating_ip_tuple[1]  # Return the floating IP address and ID
+
 
 def attach_port_to_server(conn, server_name, vip_port):
     server_instance = conn.compute.find_server(server_name)
     server_interfaces = conn.compute.server_interfaces(server_instance)
     for interface in server_interfaces:
         if interface.port_id == vip_port.id:
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {vip_port.id} is already attached to instance {server_name}.")
+            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {vip_port.id} is already attached to instance,{server_instance.name}.")
             return
     conn.compute.create_server_interface(
         server=server_instance.id,
         port_id=vip_port.id
     )
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Attached VIP port {vip_port.id} to instance {server_name}.")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Attached VIP port {vip_port.id} to instance {server_instance.name}.")
 
-def generate_vip_addresses_file(haproxy_server2, vip_floating_ip_haproxy2):
-    with open("vip_address", "w") as f:
+def generate_vip_addresses_file(vip_floating_ip_haproxy2):
+    with open("vip_address.txt", "w") as f:
         f.write(f"{vip_floating_ip_haproxy2}\n")
-
+    with open("configurations/vip_address.txt", "w") as f:
+        f.write(f"{vip_floating_ip_haproxy2}\n")
 
 def generate_servers_fips_file(server_fip_map, file_path):
     with open(file_path, 'w') as f:
@@ -398,20 +412,19 @@ def main(rc_file, tag_name, private_key):
     uuids = fetch_server_uuids(conn, "Ubuntu 20.04 Focal Fossa x86_64", "1C-2GB-50GB", keypair_name, network_id, security_group_id)    
     existing_servers, _ = run_command("openstack server list --status ACTIVE --column Name -f value")
     fip_map, server_id =create_servers(conn, tag_name, uuids['image_id'], uuids['flavor_id'], uuids['keypair_name'], security_group_name, uuids['network_id'], existing_servers)
-    generate_servers_fips_file(fip_map, "servers_fips")
+    generate_servers_fips_file(fip_map, "servers_fip.txt")
     dev_ip_map=manage_dev_servers(conn, existing_servers, tag_name, uuids['image_id'], uuids['flavor_id'], uuids['keypair_name'], security_group_name, uuids['network_id'])
     existing_ports = conn.network.ports()
     vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, server_id, existing_ports)
-    vip_floating_ip_haproxy2,vip_floating_ip_id = create_and_assign_fip(conn, vip_port_haproxy2, "ext-net")
     attach_port_to_server(conn, server_id, vip_port_haproxy2)
-    generate_vip_addresses_file(server_id, vip_floating_ip_haproxy2)
+    vip_floating_ip_haproxy2= assign_floating_ip_to_port(conn, vip_port_haproxy2)
+    generate_vip_addresses_file(vip_floating_ip_haproxy2)
     #generate_configs(tag_name,private_key)    
-    #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Configuration files generated.")
-    #time.sleep(40) 
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Configuration files generated.")
+    #time.sleep(20) 
     #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
     #run_ansible_playbook()
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
-       
 if __name__ == "__main__":
       if len(sys.argv) != 4:
         print("Usage: python install.py <rc_file> <tag_name> <private_key>")

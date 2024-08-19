@@ -30,7 +30,7 @@ install_dependencies() {
     if ! dpkg-query -W -f='${Status}' software-properties-common 2>/dev/null | grep -q "ok installed"; then
         sudo apt install -y software-properties-common
     fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk 
 }
 
 # Function to set up permissions

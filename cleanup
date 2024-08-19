@@ -33,6 +33,8 @@ setup_permissions() {
 
 # Function to invoke the Python script
 invoke_python_script() {
+    source $OPENRC
+    echo "sourced $OPENRC"
     python3 scripts/cleanup.py $OPENRC $TAG
 }
 

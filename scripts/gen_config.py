@@ -123,7 +123,7 @@ def main(tag_name, key_path):
     conn = openstack.connect()
 
     internal_ips = fetch_internal_ips(conn, tag_name)
-    fip_map = read_fip_file('servers_fip')
+    fip_map = read_fip_file('servers_fip.txt')
     print("Internal IPs:", internal_ips)
     print("Floating IPs:", fip_map)
     generate_ssh_config(internal_ips, fip_map, tag_name, key_path)

@@ -83,15 +83,31 @@ def manage_dev_servers(conn, existing_servers, tag_name, keypair_name, network, 
 
 
 def generate_configs(tag_name, private_key):
-    print("Genrating Configuration files.")
-    output = run_command(f"python3 gen_config.py {tag_name} {private_key}")
+    print("Generating Configuration files.")
+    try:
+        output = run_command(f"python3 gen_config.py {tag_name} {private_key}")
+        if "No such file or directory" in output[1]:
+            raise FileNotFoundError
+    except FileNotFoundError:
+        output = run_command(f"python3 scripts/gen_config.py {tag_name} {private_key}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
     print(output)
     return output
 
 def run_ansible_playbook():
     print("Running Ansible playbook...")
-    ansible_command = "ansible-playbook -i hosts site.yaml"
-    subprocess.run(ansible_command, shell=True)
+    try:
+        output = run_command("ansible-playbook -i hosts site.yaml")
+        if "could not be found" in output[1]:
+            raise FileNotFoundError
+    except FileNotFoundError:
+        output = run_command("ansible-playbook -i hosts scripts/site.yaml")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
+    subprocess.run(output[0], shell=True)
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
@@ -103,7 +119,10 @@ if __name__ == "__main__":
     private_key = sys.argv[3]
     conn = connect_to_openstack()
     while True:
-        required_dev_servers = read_required_servers('servers.conf')
+        try:
+            required_dev_servers = read_required_servers('configurations/servers.conf')
+        except FileNotFoundError:
+            required_dev_servers = read_required_servers('scripts/servers.conf')
         log(f"Required number of dev servers: {required_dev_servers}")
         
         existing_servers = conn.compute.servers(details=True) 
