@@ -369,7 +369,7 @@ def main(rc_file, tag_name, private_key):
     #time.sleep(40) 
     #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
     #run_ansible_playbook()
-    #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
 
 if __name__ == "__main__":
       if len(sys.argv) != 4:

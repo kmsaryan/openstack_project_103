@@ -98,16 +98,9 @@ def generate_configs(tag_name, private_key):
 
 def run_ansible_playbook():
     print("Running Ansible playbook...")
-    try:
-        output = run_command("ansible-playbook -i hosts site.yaml")
-        if "could not be found" in output[1]:
-            raise FileNotFoundError
-    except FileNotFoundError:
-        output = run_command("ansible-playbook -i hosts scripts/site.yaml")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return None
-    subprocess.run(output[0], shell=True)
+    ansible_command = "ansible-playbook -i hosts scripts/site.yaml"
+    subprocess.run(ansible_command, shell=True)
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
