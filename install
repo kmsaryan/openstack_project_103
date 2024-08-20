@@ -47,11 +47,12 @@ setup_permissions() {
 invoke_python_script() {
     source $OPENRC
     echo "sourced $OPENRC"
-    python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY
-    python3 scripts/gen_config.py $TAG $SSH_KEY
+    python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY || exit 1
+    python3 scripts/gen_config.py $TAG $SSH_KEY || exit 1
+    echo "Waiting for 20 seconds "
     sleep 20 
-    echo " Executing ansible-playbook.."
-    ansible-playbook -i hosts scripts/site.yaml 
+    echo "Executing ansible-playbook.."
+    ansible-playbook -i hosts scripts/site.yaml || exit 1
     }
 
 # Main script execution

@@ -39,7 +39,8 @@ setup_permissions() {
 invoke_python_script() {
     source $OPENRC
     echo "sourced $OPENRC"
-    python3 scripts/operate.py $OPENRC $TAG $SSH_KEY
+    python3 scripts/operate.py $OPENRC $TAG $SSH_KEY || exit 1
+    
 }
 
 # Main script execution
