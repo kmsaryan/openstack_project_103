@@ -46,11 +46,11 @@ setup_permissions() {
 
  invoke_python_script() {
      source $OPENRC
-     echo "sourced $OPENRC"
+     echo  "sourced $OPENRC"
      python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY || exit 1
-     echo"executing next script"
+     echo "executing next script"
      python3 scripts/gen_config.py $TAG $SSH_KEY || exit 1
-    echo"python script executed"
+     echo "python script executed"
  }
 
 function ssh_to_servers {
@@ -95,8 +95,8 @@ ansible_playbook() {
     # Set the ANSIBLE_CONFIG environment variable
     export ANSIBLE_CONFIG=ansible.cfg
     echo "Ansible config set to $ANSIBLE_CONFIG"
-    echo "Checking ping to hosts..."
-    ansible all -m ping > install.log 2>&1
+    sleep 20
+    ansible all -m ping -i hosts || exit 1
     if [ $? -eq 0 ]; then
         echo "Ping successful to hosts."    
         echo "Executing ansible-playbook.."

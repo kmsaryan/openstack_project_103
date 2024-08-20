@@ -121,7 +121,7 @@
 
     - name: Set virtual IPs
       set_fact:
-        virtual_ips: "{{ lookup('file', '../scripts/vip_address') | regex_findall('([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)') }}"
+        virtual_ips: "{{ lookup('file', '../vip_address') | regex_findall('([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)') }}"
 
     - name: Set node state and priority
       set_fact:
@@ -288,3 +288,56 @@
         state: started
         enabled: true
 
+- name: Setup Monitoring
+  hosts: bastion
+  become: true
+  vars:
+    grafana_admin_password: 'SuperSecretPassword123'
+  tasks:
+    - name: Update apt repo and cache on all Ubuntu boxes
+      apt:
+        update_cache: true
+
+    - name: Copy Prometheus configuration file
+      template:
+        src: ../configurations/prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        mode: 0644
+      notify:
+        - Restart Prometheus
+
+    - name: Copy Grafana configuration file
+      template:
+        src: ../configurations/grafana.ini.j2
+        dest: /etc/grafana/grafana.ini
+        mode: 0644
+      notify:
+        - Restart Grafana
+
+  handlers:
+    - name: Restart Prometheus
+      service:
+        name: prometheus
+        state: restarted
+
+    - name: Restart Grafana
+      service:
+        name: grafana-server
+        state: restarted
+
+- name: Print out credentials
+  hosts: localhost
+  tasks:
+    - name: Display Prometheus and Grafana credentials
+      debug:
+        msg: |
+          *******************************
+          Prometheus URL: http://{{ inventory_hostname }}:9090
+          Grafana URL: http://{{ inventory_hostname }}:3000
+          
+          Grafana Credentials:
+          Username: admin
+          Password: {{ grafana_admin_password }}
+          
+          SNMP Community String: public
+          *******************************

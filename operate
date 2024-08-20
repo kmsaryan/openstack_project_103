@@ -11,22 +11,23 @@ SSH_KEY=$3
 
 # Function to check and install necessary dependencies
 install_dependencies() {
+    touch operate.log
+    chmod 777 operate.log
     echo "Checking and installing necessary dependencies..."
-    if ! command -v python3 &> /dev/null; then
+    if ! command -v python3 &> operate.log; then
         sudo apt update
         sudo apt install -y python3
     fi
-    if ! command -v pip3 &> /dev/null; then
+    if ! command -v pip3 &> operate.log; then
         sudo apt install -y python3-pip
     fi
-    if ! command -v openstack &> /dev/null; then
+    if ! command -v openstack &> operate.log; then
         sudo apt install -y python3-openstackclient
     fi
-    if ! command -v ansible &> /dev/null; then
+    if ! command -v ansible &> operate.log; then
         sudo add-apt-repository --yes --update ppa:ansible/ansible
         sudo apt install -y ansible
     fi
-
     pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
 }
 
@@ -40,7 +41,6 @@ invoke_python_script() {
     source $OPENRC
     echo "sourced $OPENRC"
     python3 scripts/operate.py $OPENRC $TAG $SSH_KEY || exit 1
-    
 }
 
 # Main script execution
