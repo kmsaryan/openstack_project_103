@@ -21,13 +21,16 @@ def connect_to_openstack():
         user_domain_name=os.getenv('OS_USER_DOMAIN_NAME'),
         project_domain_name=os.getenv('OS_PROJECT_DOMAIN_NAME')
     )
+
 def extract_public_key(private_key_path):
     public_key_path = private_key_path + '.pub'
+    #print(f"{public_key_path}")
     if not os.path.exists(public_key_path):
         command = f"ssh-keygen -y -f {private_key_path} > {public_key_path}"
         subprocess.run(command, shell=True, check=True)
     with open(public_key_path, 'r') as file:
-        public_key = file.read().strip()    
+        public_key = file.read().strip()
+        #print(f"{public_key}")
     return public_key
 
 def create_keypair(conn, keypair_name, private_key_path):
@@ -38,6 +41,12 @@ def create_keypair(conn, keypair_name, private_key_path):
         public_key = extract_public_key(private_key_path)
         keypair = conn.compute.create_keypair(name=keypair_name, public_key=public_key)
         print(f"{current_date_time} Created keypair {keypair_name}.")
+        # Verify that the keypair was uploaded correctly
+        uploaded_keypair = conn.compute.find_keypair(keypair_name)
+        if uploaded_keypair and uploaded_keypair.public_key == public_key:
+            print(f"{current_date_time} Verified keypair {keypair_name} was uploaded successfully.")
+        else:
+            print(f"{current_date_time} Failed to verify keypair {keypair_name}.")
     else:
         print(f"{current_date_time} Keypair {keypair_name} already exists.")
     return keypair.id
@@ -73,11 +82,9 @@ def setup_network(conn, tag_name, network_name, subnet_name, router_name, securi
         router = conn.network.create_router(name=router_name, external_gateway_info={'network_id': conn.network.find_network('ext-net').id})
         conn.network.add_interface_to_router(router, subnet_id=subnet.id)
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created router {router_name} and attached subnet {subnet_name}.")
-        router_id = router.id
     else:
         router = conn.network.find_router(router_name)
-        router_id = router.id
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Router {router_name}.{router_id} already exists.")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Router {router_name} already exists.")
 
     # Create security group
     security_group = conn.network.find_security_group(security_group_name)
@@ -105,13 +112,14 @@ def setup_network(conn, tag_name, network_name, subnet_name, router_name, securi
                 port_range_max=rule.get('port_range_max'),
                 remote_ip_prefix=rule['remote_ip_prefix']
             )
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created security group {security_group_name} with rules.")
-        security_group_id = security_group.id
+            security_group_id=security_group.id
+            return security_group_id
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created security group {security_group_name} with rules.{security_group_id}")
+
     else:
         security_group = conn.network.find_security_group(security_group_name)
-        security_group_id = security_group.id
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Security group {security_group_name}.{security_group_id} already exists.")  
-    return network_id, subnet_id, router_id, security_group_id
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Security group {security_group_name} already exists{security_group.id}")  
+    return network_id, subnet_id
 
 def wait_for_active_state(server, retries=5, delay=30):
     for _ in range(retries):
@@ -153,23 +161,24 @@ def associate_floating_ip(conn, server, floating_ip_tuple):
     return floating_ip
 
 
-def fetch_server_uuids(conn, image_name, flavor_name, keypair_id, network_id, security_group_id):
+def fetch_server_uuids(conn, image_name, flavor_name, security_group_name):
     # Fetch image UUID
     image = conn.compute.find_image(image_name)
     if not image:
         raise Exception(f"Image {image_name} not found")
     image_id = image.id
+    
+    # Fetch flavor UUID
     flavor = conn.compute.find_flavor(flavor_name)
     if not flavor:
         raise Exception(f"Flavor {flavor_name} not found")
     flavor_id = flavor.id
-    return {
-        'keypair_name': keypair_id,
-        'image_id': image_id,
-        'flavor_id': flavor_id,
-        'network_id': network_id,
-        'security_group_id': security_group_id
-    }
+    # Fetch security group UUID
+    security_group = conn.network.find_security_group(security_group_name)
+    if not security_group:
+        raise Exception(f"Security group {security_group_name} not found")
+    security_group_id = security_group.id
+    return {'image_id': image_id, 'flavor_id': flavor_id, 'security_group_id': security_group_id}
 
 def get_floating_ip(addresses):
     for network, address_list in addresses.items():
@@ -178,99 +187,39 @@ def get_floating_ip(addresses):
                 return address['addr']
     return None
 
-def create_servers(conn, tag_name, image_id, flavor_id, keypair_name, security_group_name, network_id, existing_servers):
-    fip_map = {}
-
-    bastion_server_name = f"{tag_name}_bastion"
-    bastion_port_name=f"{tag_name}_bastion_port"
-
-    if bastion_server_name in existing_servers:
-        bastion_ser = conn.compute.find_server(bastion_server_name)
-        bastion_port = conn.network.find_port(bastion_port_name)
-        fip = get_floating_ip(bastion_ser.addresses)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Bastion server {bastion_server_name} already exists. {fip}, {bastion_port_name}")
-        bastion_fip = fip
-        fip_map[bastion_server_name] = bastion_fip
-
+def create_servers(conn, server_name, port_name, image_id, flavor_id, keypair_name, security_group_id, network_id, floating_ip_required,existing_servers): 
+    if server_name in existing_servers:
+        server = conn.compute.find_server(server_name)
+        port = conn.network.find_port(port_name)
+        fip = get_floating_ip(server.addresses) if floating_ip_required else None
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Server {server_name} already exists. {fip}, {port_name}")
+        #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Used security group: {security_group_id}")
+        return server, fip
     else:
-        bastion_port = conn.network.create_port(name=bastion_port_name,network_id=network_id)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {bastion_port.name} with ID {bastion_port.id}.")
-        bastion_server = conn.compute.create_server(
-            name=bastion_server_name,
+        port = conn.network.create_port(name=port_name, network_id=network_id,security_groups=[security_group_id])
+        #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Using security group: {security_group_id}")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {port.name} with ID {port.id}.")
+        server = conn.compute.create_server(
+            name=server_name,
             image_id=image_id,
             flavor_id=flavor_id,
             key_name=keypair_name,
-            security_groups=[{'name': security_group_name}],
-            networks=[{"port": bastion_port.id}]
+            networks=[{"port": port.id}]
         )
-        bastion_server = conn.compute.wait_for_server(bastion_server)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {bastion_server.name} created.")
-        bastion_fip_tuple = create_floating_ip(conn, "ext-net")
-        associate_floating_ip(conn, bastion_server_name, bastion_fip_tuple)
-        bastion_fip = bastion_fip_tuple[2]  # Use the floating IP address
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {bastion_server.name} assigned floating IP {bastion_fip}.")
-        fip_map[bastion_server_name] = bastion_fip
+        server = conn.compute.wait_for_server(server)
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Server {server.name}")
+        # Verify the applied security groups
+        applied_security_groups = [sg['name'] for sg in server.security_groups]
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Applied security groups: {applied_security_groups}")
 
-    haproxy_server_name = f"{tag_name}_HAproxy"
-    haproxy_port_name=f"{tag_name}_haproxy_port"
-    if haproxy_server_name in existing_servers:
-        haproxy_ser = conn.compute.find_server(haproxy_server_name)
-        haproxy_port = conn.network.find_port(haproxy_port_name)
-        fip1 = get_floating_ip(haproxy_ser.addresses)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {haproxy_server_name} already exists. {fip1}, {haproxy_port_name}")
-        haproxy_fip = fip1
-        fip_map[haproxy_server_name] = haproxy_fip
-
-    else:
-        haproxy_port = conn.network.create_port(name=haproxy_port_name,network_id=network_id)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {haproxy_port.name} with ID {haproxy_port.id}.")
-        haproxy_server = conn.compute.create_server(
-            name=haproxy_server_name,
-            image_id=image_id,
-            flavor_id=flavor_id,
-            key_name=keypair_name,
-            security_groups=[{'name': security_group_name}],
-            networks=[{"port": haproxy_port.id}]
-        )
-        haproxy_server = conn.compute.wait_for_server(haproxy_server)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server.name} created.")
-        haproxy_fip_tuple = create_floating_ip(conn, "ext-net")
-        associate_floating_ip(conn, haproxy_server_name, haproxy_fip_tuple)
-        haproxy_fip = haproxy_fip_tuple[2]  # Use the floating IP address
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server.name} assigned floating IP {haproxy_fip}.")
-        fip_map[haproxy_server_name] = haproxy_fip
-
-    haproxy_server2_name = f"{tag_name}_HAproxy2"
-    haproxy_port2_name=f"{tag_name}_haproxy2_port"
-    if haproxy_server2_name in existing_servers:
-        haproxy_ser2 = conn.compute.find_server(haproxy_server2_name)
-        haproxy_port2 = conn.network.find_port(haproxy_port2_name)
-        server_id = haproxy_ser2.id
-        print(f"{server_id}")
-        fip2 = get_floating_ip(haproxy_ser2.addresses)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} server {haproxy_server2_name} already exists. {fip2}, {haproxy_port2_name}")
-        haproxy_fip2 = fip2
-        fip_map[haproxy_server2_name] = haproxy_fip2
-    else:
-        haproxy_port2 = conn.network.create_port(name=haproxy_port2_name,network_id=network_id )
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {haproxy_port2.name} with ID {haproxy_port2.id}.")
-        haproxy_server2 = conn.compute.create_server(
-            name=haproxy_server2_name,
-            image_id=image_id,
-            flavor_id=flavor_id,
-            key_name=keypair_name,
-            security_groups=[{'name': security_group_name}],
-            networks=[{"port": haproxy_port2.id}]
-        )
-        haproxy_server2 = conn.compute.wait_for_server(haproxy_server2)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server2.name} created.")
-        haproxy_fip2_tuple = create_floating_ip(conn, "ext-net")
-        associate_floating_ip(conn, haproxy_server2_name, haproxy_fip2_tuple)
-        haproxy_fip2 = haproxy_fip2_tuple[2]  # Use the floating IP address
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HAProxy server {haproxy_server2.name} assigned floating IP {haproxy_fip2}.")
-        fip_map[haproxy_server2_name] = haproxy_fip2
-        server_id = haproxy_server2.id  # Capture the server_id for the newly created server    
-    return fip_map, server_id
+        if floating_ip_required:
+            fip_tuple = create_floating_ip(conn, "ext-net")
+            associate_floating_ip(conn, server_name, fip_tuple)
+            fip = fip_tuple[2]  # Use the floating IP address
+            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Server {server.name} assigned floating IP {fip}.")
+        else:
+            fip = None
+        return server, fip
 
 def manage_dev_servers(conn, existing_servers, tag_name, image_id, flavor_id, keypair_name, security_group_name, network_id):
     dev_ips = {}
@@ -279,22 +228,20 @@ def manage_dev_servers(conn, existing_servers, tag_name, image_id, flavor_id, ke
     required_dev_servers = 3
     devservers_count = len([line for line in existing_servers.splitlines() if dev_server in line])
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Will need {required_dev_servers} node, launching them.")        
+    dev_servers = conn.compute.servers(details=True, all_projects=False, filters={"name": f"{dev_server}*"})
+    for server in dev_servers:
+        if network_id in server.addresses and server.addresses[network_id]:
+            internal_ip = server.addresses[network_id][0]['addr']
+            dev_ips[server.name] = internal_ip
+            print(f"Existing server {server.name} with IP {internal_ip} added to dev_ips")
+
     if required_dev_servers > devservers_count:
         devservers_to_add = required_dev_servers - devservers_count
         sequence = devservers_count + 1
         while devservers_to_add > 0:
             devserver_name = f"{dev_server}{sequence}"
-            dev_port_n= f"{dev_port_name}{sequence}"
-            dev_port = conn.network.create_port(name=dev_port_n,network_id=network_id)
-            server = conn.compute.create_server(
-                name=devserver_name,
-                image_id=image_id,
-                flavor_id=flavor_id,
-                key_name=keypair_name,
-                security_groups=[{'name': security_group_name}],
-                networks=[{"port":dev_port.id}])
-            server = conn.compute.wait_for_server(server)
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created {devserver_name} server")
+            dev_port_n = f"{dev_port_name}{sequence}"
+            server, _ = create_servers(conn, devserver_name, dev_port_n, image_id, flavor_id, keypair_name, security_group_name, network_id, False, existing_servers)
             if network_id in server.addresses and server.addresses[network_id]:
                 internal_ip = server.addresses[network_id][0]['addr']
                 dev_ips[devserver_name] = internal_ip
@@ -320,7 +267,6 @@ def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, existing
     if existing_port:
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {vip_port_name} already exists with ID {existing_port.id}.")
         return existing_port
-    
     # Create a new VIP port if it does not exist
     vip_port = conn.network.create_port(
         name=vip_port_name,
@@ -330,7 +276,6 @@ def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, existing
         device_owner="network:loadbalancer",
         device_id=server_name
     )
-    
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {vip_port_name} with ID {vip_port.id}.")
     return vip_port
 
@@ -369,10 +314,9 @@ def attach_port_to_server(conn, server_name, vip_port):
 def generate_vip_addresses_file(vip_floating_ip_haproxy2):
     with open("vip_address.txt", "w") as f:
         f.write(f"{vip_floating_ip_haproxy2}\n")
-    with open("configurations/vip_address.txt", "w") as f:
-        f.write(f"{vip_floating_ip_haproxy2}\n")
 
-def generate_servers_fips_file(server_fip_map, file_path):
+
+def generate_servers_ip_file(server_fip_map, file_path):
     with open(file_path, 'w') as f:
         for server, fip in server_fip_map.items():
             f.write(f"{server}: {fip}\n")
@@ -406,30 +350,46 @@ def main(rc_file, tag_name, private_key):
     router_name = f"{tag_name}_router"
     security_group_name = f"{tag_name}_security_group"
     keypair_name = f"{tag_name}_key"
+    bastion_name = f"{tag_name}_bastion"
+    bastion_port_name = f"{tag_name}_bastion_port"
+    haproxy_name = f"{tag_name}_HAproxy"
+    haproxy_port_name = f"{tag_name}_HAproxy_port"
+    haproxy2_name = f"{tag_name}_HAproxy2"
+    haproxy2_port_name = f"{tag_name}_HAproxy2_port"
+    
 
-    create_keypair(conn, keypair_name, private_key)
-    network_id, subnet_id, router_id, security_group_id = setup_network(conn, tag_name, network_name, subnet_name, router_name, security_group_name)
-    uuids = fetch_server_uuids(conn, "Ubuntu 20.04 Focal Fossa x86_64", "1C-2GB-50GB", keypair_name, network_id, security_group_id)    
+    #create_keypair(conn, keypair_name, private_key)
+    network_id, subnet_id = setup_network(conn, tag_name, network_name, subnet_name, router_name, security_group_name,)
+    uuids = fetch_server_uuids(conn, "Ubuntu 20.04 Focal Fossa x86_64", "1C-2GB-50GB",security_group_name)
     existing_servers, _ = run_command("openstack server list --status ACTIVE --column Name -f value")
-    fip_map, server_id =create_servers(conn, tag_name, uuids['image_id'], uuids['flavor_id'], uuids['keypair_name'], security_group_name, uuids['network_id'], existing_servers)
-    generate_servers_fips_file(fip_map, "servers_fip.txt")
-    dev_ip_map=manage_dev_servers(conn, existing_servers, tag_name, uuids['image_id'], uuids['flavor_id'], uuids['keypair_name'], security_group_name, uuids['network_id'])
+    bastion_server, bastion_fip = create_servers(conn,bastion_name,bastion_port_name,uuids['image_id'],uuids['flavor_id'],keypair_name,uuids['security_group_id'],network_id,True,existing_servers)
+    haproxy_server, haproxy_fip = create_servers(conn, haproxy_name, haproxy_port_name, uuids['image_id'],uuids['flavor_id'],keypair_name,uuids['security_group_id'],network_id,True,existing_servers)
+    haproxy2_server, haproxy2_fip = create_servers(conn, haproxy2_name, haproxy2_port_name, uuids['image_id'],uuids['flavor_id'],keypair_name,uuids['security_group_id'],network_id,True,existing_servers)
+    fip_map = {
+        bastion_name: bastion_fip,
+        haproxy_name: haproxy_fip,
+        haproxy2_name: haproxy2_fip
+    }    
+    generate_servers_ip_file(fip_map, "servers_fip")
+    dev_ip_map = manage_dev_servers(conn, existing_servers, tag_name, uuids['image_id'], uuids['flavor_id'], keypair_name, uuids["security_group_id"], network_id)
+    generate_servers_ip_file(dev_ip_map, "dev_ips")
     existing_ports = conn.network.ports()
-    vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, server_id, existing_ports)
-    attach_port_to_server(conn, server_id, vip_port_haproxy2)
-    vip_floating_ip_haproxy2= assign_floating_ip_to_port(conn, vip_port_haproxy2)
+    vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, haproxy2_server.id, existing_ports)
+    attach_port_to_server(conn, haproxy2_server.id, vip_port_haproxy2)
+    vip_floating_ip_haproxy2 = assign_floating_ip_to_port(conn, vip_port_haproxy2)
     generate_vip_addresses_file(vip_floating_ip_haproxy2)
-    #generate_configs(tag_name,private_key)    
+    generate_configs(tag_name, private_key)    
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Configuration files generated.")
-    #time.sleep(20) 
-    #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
-    #run_ansible_playbook()
+    time.sleep(20) 
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
+    run_ansible_playbook()
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
+
 if __name__ == "__main__":
       if len(sys.argv) != 4:
-        print("Usage: python install.py <rc_file> <tag_name> <private_key>")
+        print("Usage: python install.py <rc_file> <tag_name> <public_key>")
         sys.exit(1)    
 rc_file = sys.argv[1]
 tag_name = sys.argv[2]
-private_key = sys.argv[3]
-main(rc_file, tag_name, private_key)
+public_key = sys.argv[3]
+main(rc_file, tag_name, public_key)
