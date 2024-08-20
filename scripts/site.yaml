@@ -292,7 +292,7 @@
   hosts: bastion
   become: true
   vars:
-    grafana_admin_password: 'SuperSecretPassword123'
+    grafana_admin_password: 'grafana_103'
   tasks:
     - name: Update apt repo and cache on all Ubuntu boxes
       apt:
@@ -327,16 +327,18 @@
 
 - name: Print out credentials
   hosts: localhost
+  vars:
+    grafana_admin_password: grafana_103
   tasks:
     - name: Display Prometheus and Grafana credentials
       debug:
         msg: |
           *******************************
-          Prometheus URL: http://{{ inventory_hostname }}:9090
-          Grafana URL: http://{{ inventory_hostname }}:3000
+          Prometheus URL: http://{{ hostvars['bastion_host']['ansible_host'] }}:9090
+          Grafana URL: http://{{ hostvars['bastion_host']['ansible_host']  }}:3000
           
           Grafana Credentials:
-          Username: admin
+          Username: Project_103
           Password: {{ grafana_admin_password }}
           
           SNMP Community String: public
