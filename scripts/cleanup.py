@@ -6,8 +6,6 @@ import openstack.exceptions
 import subprocess
 from contextlib import contextmanager
 
-
-# Create connection to OpenStack
 def connect_to_openstack():
     return openstack.connect(
         auth_url=os.getenv('OS_AUTH_URL'),
@@ -92,9 +90,9 @@ def delete_subnets(conn, subnet_names):
             for port in ports:
                 try:
                     conn.network.delete_port(port)
-                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Detached port {port.id} associated with subnet {subnet_name}")
+                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Detached port {port.name} associated with subnet {subnet_name}")
                 except openstack.exceptions.ResourceNotFound:
-                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Port {port.id} not found")
+                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Port {port.name} not found")
 
             # Delete subnet
             try:
@@ -153,7 +151,7 @@ def delete_keypair(conn, keypair_name):
 def delete_files(tag_name):
     # List of files to delete
     config_file = "config"
-    files_to_delete = ['servers_fip.txt', 'vip_address.txt', 'hosts','ansible.cfg', config_file]
+    files_to_delete = ['servers_fip', 'vip_address', 'hosts','ansible.cfg', config_file]
     for file_name in files_to_delete:
         try:
             os.remove(file_name)

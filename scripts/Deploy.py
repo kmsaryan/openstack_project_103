@@ -48,7 +48,7 @@ def create_keypair(conn, keypair_name, private_key_path):
         else:
             print(f"{current_date_time} Failed to verify keypair {keypair_name}.")
     else:
-        print(f"{current_date_time} Keypair {keypair_name} already exists.{keypair.id}")
+        print(f"{current_date_time} Keypair {keypair_name} already exists.")
     return keypair.id
 
 def setup_network(conn, tag_name, network_name, subnet_name, router_name, security_group_name):
@@ -58,10 +58,12 @@ def setup_network(conn, tag_name, network_name, subnet_name, router_name, securi
         network = conn.network.create_network(name=network_name)
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created network {network_name}.{network.id}")
         network_id = network.id
+
     else:
         network = conn.network.find_network(network_name)
         network_id = network.id
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Network {network_name},{network_id} exists.")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Network {network_name}.{network_id} already exists.")
+
     # Create subnet
     subnet = conn.network.find_subnet(subnet_name)
     if not subnet:
@@ -73,7 +75,7 @@ def setup_network(conn, tag_name, network_name, subnet_name, router_name, securi
     else:
         subnet = conn.network.find_subnet(subnet_name)
         subnet_id = subnet.id
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Subnet {subnet_name}.{subnet_id} exists.")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Subnet {subnet_name}.{subnet_id} already exists.")
     # Create router
     router = conn.network.find_router(router_name)
     if not router:
@@ -82,7 +84,7 @@ def setup_network(conn, tag_name, network_name, subnet_name, router_name, securi
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created router {router_name} and attached subnet {subnet_name}.")
     else:
         router = conn.network.find_router(router_name)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Router {router_name} exists.")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Router {router_name} already exists.")
 
     # Create security group
     security_group = conn.network.find_security_group(security_group_name)
@@ -99,27 +101,16 @@ def setup_network(conn, tag_name, network_name, subnet_name, router_name, securi
             {"protocol": "tcp", "port_range_min": 9100, "port_range_max": 9100, "remote_ip_prefix": "0.0.0.0/0"},
             {"protocol": "tcp", "port_range_min": 3000, "port_range_max": 3000, "remote_ip_prefix": "0.0.0.0/0"},
             {"protocol": "udp", "port_range_min": 161, "port_range_max": 161, "remote_ip_prefix": "0.0.0.0/0"},
-            {"protocol": 112, "remote_ip_prefix": "0.0.0.0/0"}
+            {"protocol": 112, "remote_ip_prefix": "0.0.0.0/0"}  # VRRP protocol
         ]
         for rule in rules:
             conn.network.create_security_group_rule(
-                security_group_id=security_group.id,
-                direction='ingress',
-                protocol=rule['protocol'],
-                port_range_min=rule.get('port_range_min'),
-                port_range_max=rule.get('port_range_max'),
-                remote_ip_prefix=rule['remote_ip_prefix']
-            )
-            security_group_id=security_group.id
-            return security_group_id
-        
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created security group {security_group_name} with rules{security_group_id}")
-
+                security_group_id=security_group.id,direction='ingress', protocol=rule['protocol'],port_range_min=rule.get('port_range_min'),  port_range_max=rule.get('port_range_max'), remote_ip_prefix=rule['remote_ip_prefix'])
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created security group {security_group_name} with rules.")
     else:
         security_group = conn.network.find_security_group(security_group_name)
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Security group {security_group_name} already exists {security_group.id} ")  
-    security_group_id = security_group.id
-    return network_id, subnet_id, security_group_id
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Security group {security_group_name} already exists{security_group.id}")  
+    return network_id, subnet_id
 
 def wait_for_active_state(server, retries=5, delay=30):
     for _ in range(retries):
@@ -160,15 +151,20 @@ def associate_floating_ip(conn, server, floating_ip_tuple):
     conn.network.update_ip(floating_ip_id, port_id=server_port.id)
     return floating_ip
 
+
 def fetch_server_uuids(conn, image_name, flavor_name, security_group_name):
+    # Fetch image UUID
     image = conn.compute.find_image(image_name)
     if not image:
         raise Exception(f"Image {image_name} not found")
-    image_id = image.id    
+    image_id = image.id
+    
+    # Fetch flavor UUID
     flavor = conn.compute.find_flavor(flavor_name)
     if not flavor:
         raise Exception(f"Flavor {flavor_name} not found")
     flavor_id = flavor.id
+    # Fetch security group UUID
     security_group = conn.network.find_security_group(security_group_name)
     if not security_group:
         raise Exception(f"Security group {security_group_name} not found")
@@ -187,15 +183,15 @@ def create_servers(conn, server_name, port_name, image_id, flavor_id, keypair_na
         server = conn.compute.find_server(server_name)
         port = conn.network.find_port(port_name)
         fip = get_floating_ip(server.addresses) if floating_ip_required else None
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Server {server_name} already exists. {fip},{port_name}")
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Server {server_name} already exists. {fip}, {port_name}")
         #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Used security group: {security_group_id}")
         return server, fip
     else:
         port = conn.network.create_port(name=port_name, network_id=network_id,security_groups=[security_group_id])
         #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Using security group: {security_group_id}")
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {port.name} with {port.id}.")
-        server = conn.compute.create_server(
-            name=server_name,image_id=image_id,flavor_id=flavor_id, key_name=keypair_name,networks=[{"port": port.id}])
+        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created port {port.name} with ID {port.id}.")
+        server = conn.compute.create_server(name=server_name, image_id=image_id, flavor_id=flavor_id, key_name=keypair_name,networks=[{"port": port.id}])
+
         server = conn.compute.wait_for_server(server)
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Server {server.name}")
         # Verify the applied security groups
@@ -250,14 +246,22 @@ def manage_dev_servers(conn, existing_servers, tag_name, image_id, flavor_id, ke
     
     return dev_ips
 
-def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, existing_ports,security_group_id):
+def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, existing_ports):
     vip_port_name = f"{tag_name}_vip_port"
+    # Check if the port already exists using the OpenStack SDK
     existing_port = conn.network.find_port(vip_port_name)
     if existing_port:
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {vip_port_name} already exists with ID {existing_port.id}.")
         return existing_port
+    # Create a new VIP port if it does not exist
     vip_port = conn.network.create_port(
-        name=vip_port_name,network_id=network_id, fixed_ips=[{"subnet_id": subnet_id}],security_groups=[security_group_id],device_owner="network:loadbalancer", device_id=server_name)
+        name=vip_port_name,
+        network_id=network_id,
+        fixed_ips=[{"subnet_id": subnet_id}],
+        security_groups=[],
+        device_owner="network:loadbalancer",
+        device_id=server_name
+    )
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {vip_port_name} with ID {vip_port.id}.")
     return vip_port
 
@@ -297,23 +301,24 @@ def generate_vip_addresses_file(vip_floating_ip_haproxy2):
     ip_address, _ = vip_floating_ip_haproxy2  # Unpack the tuple and ignore the ID
     with open("vip_address", "w") as f:
         f.write(f"{ip_address}\n")
+    return 
 
 def generate_servers_ip_file(server_fip_map, file_path):
     with open(file_path, 'w') as f:
         for server, fip in server_fip_map.items():
-            f.write(f"{server}: {fip}\n")
+            f.write(f"{server}:{fip}\n")
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Generated servers_fips file at {file_path}.")
     return file_path
 
 def generate_configs(tag_name, private_key):
     print("Genrating Configuration files.")
-    output = run_command(f"python3 gen_config.py {tag_name} {private_key}")
+    output = run_command(f"python3 scripts/gen_config.py {tag_name} {private_key}")
     print(output)
     return output
 
 def run_ansible_playbook():
     print("Running Ansible playbook...")
-    ansible_command = "ansible-playbook -i hosts site.yaml"
+    ansible_command = "ansible-playbook -i hosts scripts/site.yaml"
     subprocess.run(ansible_command, shell=True)
 
 def main(rc_file, tag_name, private_key):
@@ -341,7 +346,7 @@ def main(rc_file, tag_name, private_key):
     
 
     create_keypair(conn, keypair_name, private_key)
-    network_id, subnet_id,security_group_id = setup_network(conn, tag_name, network_name, subnet_name, router_name, security_group_name,)
+    network_id, subnet_id = setup_network(conn, tag_name, network_name, subnet_name, router_name, security_group_name)   
     uuids = fetch_server_uuids(conn, "Ubuntu 20.04 Focal Fossa x86_64", "1C-2GB-50GB",security_group_name)
     existing_servers, _ = run_command("openstack server list --status ACTIVE --column Name -f value")
     bastion_server, bastion_fip = create_servers(conn,bastion_name,bastion_port_name,uuids['image_id'],uuids['flavor_id'],keypair_name,uuids['security_group_id'],network_id,True,existing_servers)
@@ -355,17 +360,15 @@ def main(rc_file, tag_name, private_key):
     generate_servers_ip_file(fip_map, "servers_fip")
     manage_dev_servers(conn, existing_servers, tag_name, uuids['image_id'], uuids['flavor_id'], keypair_name, uuids["security_group_id"], network_id)
     existing_ports = conn.network.ports()
-    vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, haproxy2_server.id, existing_ports,uuids['security_group_id'])
+    vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, haproxy2_server.id, existing_ports)
     attach_port_to_server(conn, haproxy2_server.id, vip_port_haproxy2)
     vip_floating_ip_haproxy2 = assign_floating_ip_to_port(conn, vip_port_haproxy2)
     generate_vip_addresses_file(vip_floating_ip_haproxy2)
-    """"
     generate_configs(tag_name, private_key)    
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Configuration files generated.")
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 20 seconds before running Ansible playbook...")
-    time.sleep(20)
+    time.sleep(40) 
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
     run_ansible_playbook()
-    """
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
 
 if __name__ == "__main__":

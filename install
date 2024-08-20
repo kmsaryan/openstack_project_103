@@ -8,29 +8,29 @@ fi
 OPENRC=$1
 TAG=$2
 SSH_KEY=$3
-
+SERVERS_FIP="servers_fip"
 
 # Function to check and install necessary dependencies
 install_dependencies() {
     echo "Checking and installing necessary dependencies..."
-    if ! command -v python3 &> /dev/null; then
-        sudo apt update
-        sudo apt install -y python3
+    if ! command -v python3 &> /install.log; then
+        sudo apt update > /install.log
+        sudo apt install -y python3 > /install.log
     fi
-    if ! command -v pip3 &> /dev/null; then
-        sudo apt install -y python3-pip
+    if ! command -v pip3 &> /install.log; then
+        sudo apt install -y python3-pip > /install.log
     fi
-    if ! command -v openstack &> /dev/null; then
-        sudo apt install -y python3-openstackclient
+    if ! command -v openstack &> /install.log; then
+        sudo apt install -y python3-openstackclient > /install.log
     fi
-    if ! command -v ansible &> /dev/null; then
-        sudo add-apt-repository --yes --update ppa:ansible/ansible
-        sudo apt install -y ansible
+    if ! command -v ansible &> /install.log; then
+        sudo add-apt-repository --yes --update ppa:ansible/ansible > /install.log
+        sudo apt install -y ansible > /install.log
     fi
-    if ! dpkg-query -W -f='${Status}' software-properties-common 2>/dev/null | grep -q "ok installed"; then
-        sudo apt install -y software-properties-common
+    if ! dpkg-query -W -f='${Status}' software-properties-common 2>/install.log | grep -q "ok installed"; then
+        sudo apt install -y software-properties-common > /install.log
     fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk 
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > /install.log
 }
 
 # Function to set up permissions
@@ -43,22 +43,69 @@ setup_permissions() {
 }
 # Function to invoke the Python script
 
+ invoke_python_script() {
+     source $OPENRC
+     echo "sourced $OPENRC"
+     python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY || exit 1
+     python3 scripts/gen_config.py $TAG $SSH_KEY || exit 1
+ }
+    
+function ssh_to_servers {
+    local servers_file=$1
+    local ssh_key=$2
+    if [ ! -f "$servers_file" ]; then
+        echo "File $servers_file not found!"
+        exit 1
+    fi
 
-invoke_python_script() {
-    source $OPENRC
-    echo "sourced $OPENRC"
-    python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY || exit 1
-    python3 scripts/gen_config.py $TAG $SSH_KEY || exit 1
-    echo "Waiting for 20 seconds "
-    sleep 20 
+    # Read the file and store IP addresses in variables
+    local count=1
+    while IFS=: read -r host ip; do
+        ip=$(echo "$ip" | xargs)  # Trim any potential whitespace
+        if [ $count -eq 1 ]; then
+            host1=$ip
+        elif [ $count -eq 2 ]; then
+            host2=$ip
+        elif [ $count -eq 3 ]; then
+            host3=$ip
+        fi
+        count=$((count + 1))
+    done < "$servers_file"
+
+    # Perform SSH connections
+    if [ -n "$host1" ]; then
+        #echo "Connecting to Host1 at $host1"
+        ssh -i "$ssh_key" -t ubuntu@"$host1" "exit" &>install.log
+    fi
+    if [ -n "$host2" ]; then
+        #echo "Connecting to Host2 at $host2"
+        ssh -i "$ssh_key" -t ubuntu@"$host2" "exit" &>install.log
+    fi
+    if [ -n "$host3" ]; then
+        #echo "Connecting to Host3 at $host3"
+        ssh -i "$ssh_key" -t ubuntu@"$host3" "exit" &>install.log
+    fi
+
+}
+
+ansible_playbook() {    
     echo "Executing ansible-playbook.."
-    ansible-playbook -i hosts scripts/site.yaml || exit 1
-    }
+    ansible all -m ping > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "Ping successful to hosts."    
+        echo "Executing ansible-playbook.."
+        ansible-playbook -i hosts scripts/site.yaml || exit 1
+    else
+        echo "Ping not successful to hosts."
+    fi
+}
+
 
 # Main script execution
 install_dependencies
 setup_permissions
-invoke_python_script
+#invoke_python_script
+ssh_to_servers $SERVERS_FIP $SSH_KEY
+ansible_playbook
 exit 1
-
 echo "Installation and configuration completed successfully."

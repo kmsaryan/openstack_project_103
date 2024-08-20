@@ -32,15 +32,16 @@ def read_fip_file(file_path):
     fip_map = {}
     with open(file_path, 'r') as f:
         for line in f:
-            server_name, fip = line.strip().split(': ')
+            server_name, fip = line.strip().split(':')
             fip_map[server_name] = fip
-            add_to_known_hosts(fip)
+            #add_to_known_hosts(fip)
     return fip_map
-
+"""
 def add_to_known_hosts(ip_address):
     command = f"ssh-keyscan -H {ip_address} >> ~/.ssh/known_hosts"
     result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return result
+"""
 
 def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
     bastion_name = f"{tag_name}_bastion"
