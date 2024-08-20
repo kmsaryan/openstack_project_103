@@ -364,12 +364,12 @@ def main(rc_file, tag_name, private_key):
     attach_port_to_server(conn, haproxy2_server.id, vip_port_haproxy2)
     vip_floating_ip_haproxy2 = assign_floating_ip_to_port(conn, vip_port_haproxy2)
     generate_vip_addresses_file(vip_floating_ip_haproxy2)
-    generate_configs(tag_name, private_key)    
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Configuration files generated.")
-    time.sleep(40) 
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
-    run_ansible_playbook()
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
+    #generate_configs(tag_name, private_key)    
+    #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Configuration files generated.")
+    #time.sleep(40) 
+    #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Waiting for 40 seconds before running Ansible playbook...")
+    #run_ansible_playbook()
+    #print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Deployment of {tag_name} completed.")
 
 if __name__ == "__main__":
       if len(sys.argv) != 4:

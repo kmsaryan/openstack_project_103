@@ -57,7 +57,7 @@ def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
         f.write(f"\tIdentityFile {key_path}\n")
         f.write("\tStrictHostKeyChecking no\n")
         f.write("\tPasswordAuthentication no\n")
-        f.write("\tServerAliveInterval 60\n\n")
+        f.write("\tServerAliveInterval 60\n")
         f.write("\tForwardAgent yes\n")
         f.write("\tControlMaster auto\n")
         f.write("\tControlPath ~/.ssh/ansible-%r@%h:%p\n")
@@ -92,7 +92,7 @@ def generate_ansible_config(tag_name, fip_map, bastion_name, key_path):
         f.write("control_master = auto\n")
         f.write("control_persist = yes\n")
         f.write("ssh_args = -o ForwardAgent=yes\n")
-        f.write(f"ansible_ssh_common_args = -o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')}\n")
+        f.write(f"ansible_ssh_common_args = -o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')}-o IdentityFile=/home/ubuntu/.ssh/id_rsa\n")
 
 def generate_host_file(internal_ips, fip_map, tag_name, key_path):
     bastion_name = f"{tag_name}_bastion"
@@ -102,20 +102,20 @@ def generate_host_file(internal_ips, fip_map, tag_name, key_path):
     with open('hosts', 'w') as f:
         f.write("[bastion]\n")
         if bastion_name in internal_ips:
-            f.write(f"{bastion_name} ansible_host={fip_map.get(bastion_name, '')} ansible_user=ubuntu ansible_ssh_private_key_file={key_path}\n\n")
+            f.write(f"{bastion_name} ansible_host={fip_map.get(bastion_name, '')}\n")
 
         f.write("[main_proxy]\n")
         if haproxy_server in internal_ips:
-            f.write(f"{haproxy_server} ansible_host={fip_map.get(haproxy_server, '')} ansible_user=ubuntu ansible_ssh_private_key_file={key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {key_path}'\n")
+            f.write(f"{haproxy_server} ansible_host={fip_map.get(haproxy_server, '')}'\n")
         
         f.write("\n[standby_proxy]\n")
         if haproxy_server2 in internal_ips:
-            f.write(f"{haproxy_server2} ansible_host={fip_map.get(haproxy_server2, '')} ansible_user=ubuntu ansible_ssh_private_key_file={key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {key_path}'\n")
+            f.write(f"{haproxy_server2} ansible_host={fip_map.get(haproxy_server2, '')}'\n")
 
         f.write("\n[devservers]\n")
         for server_name, internal_ip in internal_ips.items():
             if 'dev' in server_name:
-                f.write(f"{server_name} ansible_host={internal_ip} ansible_user=ubuntu ansible_ssh_private_key_file={key_path} ansible_ssh_common_args='-o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -i {key_path}'\n")
+                f.write(f"{server_name} ansible_host={internal_ip}'\n")
 
 def main(tag_name, key_path):
     print(f"Received tag_name: {tag_name}, key_path: {key_path}")

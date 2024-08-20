@@ -1,30 +1,38 @@
 #!/bin/bash
+#private key is to be given as 3rd argument.
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <openrc> <tag>"
+    echo "Usage: $0 <openrc> <tag> <ssh_key>"
     exit 1
 fi
 
 OPENRC=$1
 TAG=$2
+
 # Function to check and install necessary dependencies
 install_dependencies() {
+    touch cleanup.log
+    chmod 777 cleanup.log
     echo "Checking and installing necessary dependencies..."
-    if ! command -v python3 &> /dev/null; then
-        sudo apt update
-        sudo apt install -y python3
+    if ! command -v python3 &> cleanup.log; then
+        sudo apt update >cleanup.log
+        sudo apt install -y python3 >cleanup.log
     fi
-    if ! command -v pip3 &> /dev/null; then
-        sudo apt install -y python3-pip
+    if ! command -v pip3 &>cleanup.log; then
+        sudo apt install -y python3-pip >cleanup.log
     fi
-    if ! command -v openstack &> /dev/null; then
-        sudo apt install -y python3-openstackclient
+    if ! command -v openstack &>cleanup.log; then
+        sudo apt install -y python3-openstackclient >cleanup.log
     fi
-    if ! command -v ansible &> /dev/null; then
-        sudo add-apt-repository --yes --update ppa:ansible/ansible
-        sudo apt install -y ansible
+    if ! command -v ansible &>cleanup.log; then
+        sudo add-apt-repository --yes --update ppa:ansible/ansible >cleanup.log
+        sudo apt install -y ansible >cleanup.log
     fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
+    if ! dpkg-query -W -f='${Status}' software-properties-common 2>cleanup.log | grep -q "ok installed"; then
+        sudo apt install -y software-properties-common >cleanup.log
+    fi
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk >cleanup.log
 }
+
 
 # Function to set up permissions
 setup_permissions() {
@@ -35,7 +43,7 @@ setup_permissions() {
 invoke_python_script() {
     source $OPENRC
     echo "sourced $OPENRC"
-    python3 scripts/cleanup.py $OPENRC $TAG
+    python3 scripts/cleanup.py $OPENRC $TAG || exit 1
 }
 
 # Main script execution

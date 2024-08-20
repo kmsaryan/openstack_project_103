@@ -181,7 +181,6 @@ def cleanup_instances(conn, tag_name):
 
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},$> cleanup {tag_name}")
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Cleaning up {tag_name} using myRC")
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},We have {len([bastion_server, haproxy_server, haproxy_server2, dev_server])} nodes releasing them")
     delete_servers(conn, [bastion_server, haproxy_server, haproxy_server2], dev_server, devservers_count)
     delete_ports(conn, [vip_port])
     delete_router(conn, router_name)
