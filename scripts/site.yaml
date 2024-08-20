@@ -334,9 +334,8 @@
       debug:
         msg: |
           *******************************
-          Prometheus URL: http://{{ hostvars['bastion_host']['ansible_host'] }}:9090
-          Grafana URL: http://{{ hostvars['bastion_host']['ansible_host']  }}:3000
-          
+          Prometheus URL: http://{{ hostvars[groups['bastion'][0]].ansible_host }}:9090
+          Grafana URL: http://{{ hostvars[groups['bastion'][0]].ansible_host }}:3000
           Grafana Credentials:
           Username: Project_103
           Password: {{ grafana_admin_password }}
