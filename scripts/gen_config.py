@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import openstack
 import os
 import sys

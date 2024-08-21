@@ -48,17 +48,14 @@ def manage_dev_servers(conn, existing_servers, tag_name, keypair_name, network, 
     if required_dev_servers > devservers_count:
         devservers_to_add = required_dev_servers - devservers_count
         log(f"Need to add {devservers_to_add} dev servers.")
+        
 
         for i in range(devservers_count + 1, devservers_count + devservers_to_add + 1):
             devserver_name = f"{dev_server_prefix}{i}"
             log(f"Creating server {devserver_name}...")
             conn.compute.create_server(
-                name=devserver_name,
-                image_id=conn.compute.find_image('Ubuntu 20.04 Focal Fossa x86_64').id,
-                flavor_id=conn.compute.find_flavor('1C-2GB-50GB').id,
-                networks=[{"uuid": network.id}],
-                security_groups=[{"name": security_group.name}],
-                key_name=keypair_name
+                name=devserver_name,image_id=conn.compute.find_image('Ubuntu 20.04 Focal Fossa x86_64').id,flavor_id=conn.compute.find_flavor('1C-2GB-50GB').id,networks=[{"uuid": network.id}],
+                security_groups=[{"name": security_group.name}],key_name=keypair_name
             )
             log(f"Server {devserver_name} created successfully.")
     
@@ -121,10 +118,11 @@ if __name__ == "__main__":
         existing_servers = conn.compute.servers(details=True) 
         network, subnet, router, security_group, keypair_name = get_network_parameters(conn, tag_name)        
         manage_dev_servers(conn, existing_servers, tag_name, keypair_name, network, security_group, required_dev_servers)
-        time.sleep(30)
         print ("Sleeping for 30 seconds.")
-        generate_configs(tag_name, private_key)        
+        time.sleep(30)
+        generate_configs(tag_name, private_key)
+        print("sleeping for 30 seconds...")        
         time.sleep(30)
         run_ansible_playbook()
-        log("Sleeping for 30 seconds.")
+        log("Sleeping for 30 seconds...")
         time.sleep(30)

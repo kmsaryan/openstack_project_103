@@ -50,12 +50,18 @@
         name: haproxy
         state: present
         update_cache: true
+        
       
     - name: Installing keepalived
       apt:
         name: keepalived
         state: present
         update_cache: true
+
+    - name: Enable keepalived service
+      systemd:
+        name: keepalived
+        enabled: true
 
     - name: sudo sysctl -w net.ipv4.ip_nonlocal_bind=1
       become: true
@@ -98,6 +104,40 @@
         name: snmpd
         state: restarted
 
+    - name: Set virtual IPs
+      set_fact:
+        virtual_ips: "{{ lookup('file', '../vip_address') | regex_findall('([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)') }}"
+
+    - name: Set node state and priority
+      set_fact:
+        node_state: "{{ 'MASTER' if inventory_hostname == groups['main_proxy'][0] else 'BACKUP' }}"
+        node_priority: "{{ 101 if inventory_hostname == groups['main_proxy'][0] else 100 }}"
+
+    - name: configure keepalived
+      copy:
+        content: |
+          vrrp_instance VI_1 {
+              state {{ node_state }}
+              interface ens3
+              virtual_router_id 51
+              priority {{ node_priority }}
+              advert_int 1
+
+              authentication {
+                  auth_type PASS
+                  auth_pass 1234
+              }
+
+              virtual_ipaddress {
+                  {{ virtual_ip }}
+              }
+          }
+        dest: /etc/keepalived/keepalived.conf
+      vars:
+        virtual_ip: "{{ virtual_ips[0] }}"
+      notify:
+        - restart keepalived
+
   handlers:
     - name: restart haproxy
       service:
@@ -118,28 +158,6 @@
       service:
         name: snmpd
         state: restarted
-
-    - name: Set virtual IPs
-      set_fact:
-        virtual_ips: "{{ lookup('file', '../vip_address') | regex_findall('([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)') }}"
-
-    - name: Set node state and priority
-      set_fact:
-        node_state: "{{ 'MASTER' if inventory_hostname == groups['main_proxy'][0] else 'BACKUP' }}"
-        node_priority: "{{ 101 if inventory_hostname == groups['main_proxy'][0] else 100 }}"
-
-    - name: configure keepalived
-      template:
-        src: ../configurations/keepalived.conf.j2
-        dest: /etc/keepalived/keepalived.conf
-      vars:
-        virtual_ip: "{{ virtual_ips[0] }}"
-
-    - name: start keepalived
-      service:
-        name: keepalived
-        state: started
-        enabled: true
 
 - hosts: devservers
   become: true
@@ -172,7 +190,7 @@
         path: "/home/flask-app/"
         state: directory
 
-    - name: copy app.py to devservers
+    - name: copy service.py to devservers
       template:
         src: "../configurations/service.py"
         dest: "/home/flask-app/app.py"

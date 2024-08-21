@@ -11,28 +11,44 @@ SERVERS_FIP="servers_fip"
 
 # Function to check and install necessary dependencies
 install_dependencies() {
-    touch install.log
-    chmod 777 install.log
-    echo "Checking and installing necessary dependencies..."
-    if ! command -v python3 &> install.log; then
-        sudo apt update > install.log
-        sudo apt install -y python3 > install.log
+    # Check and install software-properties-common
+    if ! dpkg-query -W -f='${Status}' software-properties-common 2>/dev/null | grep -q "ok installed"; then
+        echo "Installing software-properties-common..."
+        sudo apt install -y software-properties-common
+    else
+        echo "software-properties-common already installed."
     fi
-    if ! command -v pip3 &> install.log; then
-        sudo apt install -y python3-pip > install.log
+
+    # Check and install ansible
+    if ! command -v ansible &> /dev/null; then
+        echo "Installing ansible..."
+        sudo add-apt-repository --yes --update ppa:ansible/ansible
+        sudo apt install -y ansible
+    else
+        echo "ansible already installed."
     fi
-    if ! command -v openstack &> install.log; then
-        sudo apt install -y python3-openstackclient > install.log
+
+    # Check and install Python 3.8.4
+    PYTHON_VERSION=$(python3 --version 2>&1)
+    if [[ "$PYTHON_VERSION" != "Python 3.8.4" ]]; then
+        echo "Installing Python 3.8.4..."
+        sudo add-apt-repository ppa:deadsnakes/ppa
+        sudo apt update
+        sudo apt install -y python3.8
+        sudo apt install -y python3.8-venv python3.8-dev
+        sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+    else
+        echo "Python 3.8 already installed."
     fi
-    if ! command -v ansible &> install.log; then
-        sudo add-apt-repository --yes --update ppa:ansible/ansible > install.log
-        sudo apt install -y ansible > install.log
-    fi
-    if ! dpkg-query -W -f='${Status}' software-properties-common 2>install.log | grep -q "ok installed"; then
-        sudo apt install -y software-properties-common > install.log
-    fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > install.log
-}
+
+    # Ensure pip is up to date
+    sudo apt install -y python3-pip
+    sudo pip3 install --upgrade pip
+
+    # Install required Python packages
+    sudo pip3 install platformdirs
+    sudo pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
+
 
 # Function to set up permissions
 setup_permissions() {
@@ -42,16 +58,16 @@ setup_permissions() {
     chmod 777 operate
     chmod 777 cleanup
 }
-# Function to invoke the Python script
 
- invoke_python_script() {
-     source $OPENRC
-     echo  "sourced $OPENRC"
-     python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY || exit 1
-     echo "executing next script"
-     python3 scripts/gen_config.py $TAG $SSH_KEY || exit 1
-     echo "python script executed"
- }
+# Function to invoke the Python script
+invoke_python_script() {
+    source $OPENRC
+    echo "sourced $OPENRC"
+    python3 scripts/Deploy.py $OPENRC $TAG $SSH_KEY || exit 1
+    echo "executing next script"
+    python3 scripts/gen_config.py $TAG $SSH_KEY || exit 1
+    echo "python script executed"
+}
 
 function ssh_to_servers {
     local servers_file=$1
@@ -77,17 +93,18 @@ function ssh_to_servers {
     # Perform SSH connections
     if [ -n "$host1" ]; then
         #echo "Connecting to Host1 at $host1"
-        ssh -i "$ssh_key" -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit"
     fi
     if [ -n "$host2" ]; then
         #echo "Connecting to Host2 at $host2"
-        ssh -i "$ssh_key" -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit"
     fi
     if [ -n "$host3" ]; then
         #echo "Connecting to Host3 at $host3"
-        ssh -i "$ssh_key" -t ubuntu@"$host3" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -t ubuntu@"$host3" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit"
     fi
 }
+
 ansible_playbook() {    
     echo "Executing ansible-playbook.."
     # Set the ANSIBLE_CONFIG environment variable

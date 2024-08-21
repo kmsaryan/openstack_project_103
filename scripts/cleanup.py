@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import openstack
 import os
 import argparse
@@ -158,13 +160,6 @@ def delete_files(tag_name):
             print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Removing {file_name}")
         except FileNotFoundError:
             print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},{file_name} not found")
-
-    known_hosts_file = "~/.ssh/known_hosts"
-    if os.path.exists(os.path.expanduser(known_hosts_file)):
-        os.remove(os.path.expanduser(known_hosts_file))
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},Removing known_hosts file")
-    else:
-        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')},known_hosts file not found")
 
 def cleanup_instances(conn, tag_name):
     network_name = f"{tag_name}_network"
