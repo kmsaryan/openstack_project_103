@@ -246,7 +246,7 @@ def manage_dev_servers(conn, existing_servers, tag_name, image_id, flavor_id, ke
     
     return dev_ips
 
-def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, existing_ports):
+def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, security_group_id, existing_port):
     vip_port_name = f"{tag_name}_vip_port"
     # Check if the port already exists using the OpenStack SDK
     existing_port = conn.network.find_port(vip_port_name)
@@ -254,15 +254,8 @@ def create_vip_port(conn, network_id, subnet_id, tag_name, server_name, existing
         print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} VIP port {vip_port_name} already exists with ID {existing_port.id}.")
         return existing_port
     # Create a new VIP port if it does not exist
-    vip_port = conn.network.create_port(
-        name=vip_port_name,
-        network_id=network_id,
-        fixed_ips=[{"subnet_id": subnet_id}],
-        security_groups=[],
-        device_owner="network:loadbalancer",
-        device_id=server_name
-    )
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {vip_port_name} with ID {vip_port.id}.")
+    vip_port = conn.network.create_port(name=vip_port_name, network_id=network_id,security_groups=[security_group_id])
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Created VIP port {vip_port_name} with ID {vip_port.id}{security_group_id}.")
     return vip_port
 
 def assign_floating_ip_to_port(conn, vip_port):
@@ -360,7 +353,7 @@ def main(rc_file, tag_name, private_key):
     generate_servers_ip_file(fip_map, "servers_fip")
     manage_dev_servers(conn, existing_servers, tag_name, uuids['image_id'], uuids['flavor_id'], keypair_name, uuids["security_group_id"], network_id)
     existing_ports = conn.network.ports()
-    vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, haproxy2_server.id, existing_ports)
+    vip_port_haproxy2 = create_vip_port(conn, network_id, subnet_id, tag_name, haproxy2_server.id,uuids["security_group_id"] ,existing_ports)
     attach_port_to_server(conn, haproxy2_server.id, vip_port_haproxy2)
     vip_floating_ip_haproxy2 = assign_floating_ip_to_port(conn, vip_port_haproxy2)
     generate_vip_addresses_file(vip_floating_ip_haproxy2)
