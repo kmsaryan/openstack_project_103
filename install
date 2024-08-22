@@ -43,12 +43,12 @@ install_dependencies() {
 
     # Ensure pip is up to date
     sudo apt install -y python3-pip
-    sudo pip3 install --upgrade pip
+    pip3 install --upgrade pip
 
     # Install required Python packages
-    sudo pip3 install platformdirs
-    sudo pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
-
+    pip3 install platformdirs
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk
+}
 
 # Function to set up permissions
 setup_permissions() {
@@ -125,7 +125,7 @@ ansible_playbook() {
 install_dependencies
 setup_permissions
 invoke_python_script
-ssh_to_servers $SERVERS_FIP $SSH_KEY
+#ssh_to_servers $SERVERS_FIP $SSH_KEY
 ansible_playbook
 exit 1
 echo "Installation and configuration completed successfully."
