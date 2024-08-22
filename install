@@ -81,6 +81,7 @@ function ssh_to_servers {
         #echo "Connecting to Host1 at $host1"
         ssh -i "$ssh_key" -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
     fi
+    
     if [ -n "$host2" ]; then
         #echo "Connecting to Host2 at $host2"
         ssh -i "$ssh_key" -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log

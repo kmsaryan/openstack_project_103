@@ -1,7 +1,7 @@
 #!/bin/bash
 #private key is to be given as 3rd argument.
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <openrc> <tag> <ssh_key>"
+    echo "Usage: $0 <openrc> <tag>"
     exit 1
 fi
 
