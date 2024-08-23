@@ -15,7 +15,7 @@ install_dependencies() {
     chmod 777 install.log
     echo "Checking and installing necessary dependencies..."
     if ! command -v python3 &> install.log; then
-        sudo apt update -y > install.log
+        sudo apt update > install.log
         sudo apt install -y python3 > install.log
     fi
     if ! command -v pip3 &> install.log; then
@@ -54,6 +54,7 @@ setup_permissions() {
  }
 
 function ssh_to_servers {
+    echo "Setting up SSH keys on servers..."
     local servers_file=$1
     local ssh_key=$2
     if [ ! -f "$servers_file" ]; then
@@ -77,23 +78,25 @@ function ssh_to_servers {
     # Perform SSH connections
     if [ -n "$host1" ]; then
         #echo "Connecting to Host1 at $host1"
-        ssh -i "$ssh_key" -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" #&>install.log
     fi
     if [ -n "$host2" ]; then
         #echo "Connecting to Host2 at $host2"
-        ssh -i "$ssh_key" -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" #&>install.log
     fi
     if [ -n "$host3" ]; then
         #echo "Connecting to Host3 at $host3"
-        ssh -i "$ssh_key" -t ubuntu@"$host3" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -t ubuntu@"$host3" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" #&>install.log
     fi
+
 }
 ansible_playbook() {    
     echo "Executing ansible-playbook.."
     # Set the ANSIBLE_CONFIG environment variable
-    #export ANSIBLE_CONFIG=ansible.cfg
-    #echo "Ansible config set to $ANSIBLE_CONFIG"
+    export ANSIBLE_CONFIG=ansible.cfg
+    echo "Ansible config set to $ANSIBLE_CONFIG"
     sleep 40
+    echo "Checking ping to hosts..."
     ansible all -m ping -i hosts || exit 1
     if [ $? -eq 0 ]; then
         echo "Ping successful to hosts."    
@@ -108,7 +111,7 @@ ansible_playbook() {
 install_dependencies
 setup_permissions
 invoke_python_script
-#ssh_to_servers $SERVERS_FIP $SSH_KEY
+ssh_to_servers $SERVERS_FIP $SSH_KEY
 ansible_playbook
 exit 1
 echo "Installation and configuration completed successfully."

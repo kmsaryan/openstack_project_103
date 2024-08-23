@@ -14,7 +14,7 @@ install_dependencies() {
     chmod 777 install.log
     echo "Checking and installing necessary dependencies..."
     if ! command -v python3 &> install.log; then
-        sudo apt update -y > install.log
+        sudo apt update > install.log
         sudo apt install -y python3 > install.log
     fi
     if ! command -v pip3 &> install.log; then
@@ -33,12 +33,10 @@ install_dependencies() {
     pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > install.log
 }
 
-
 # Function to set up permissions
 setup_permissions() {
     chmod 777 scripts/operate.py
 }
-# Function to invoke the Python script
 
 invoke_python_script() {
     source $OPENRC
