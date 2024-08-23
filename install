@@ -78,18 +78,17 @@ function ssh_to_servers {
     # Perform SSH connections
     if [ -n "$host1" ]; then
         #echo "Connecting to Host1 at $host1"
-        ssh -i "$ssh_key" -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -o StrictHostKeyChecking=no -t ubuntu@"$host1" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
     fi
     if [ -n "$host2" ]; then
         #echo "Connecting to Host2 at $host2"
-        ssh -i "$ssh_key" -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -o StrictHostKeyChecking=no -t ubuntu@"$host2" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
     fi
     if [ -n "$host3" ]; then
         #echo "Connecting to Host3 at $host3"
-        ssh -i "$ssh_key" -t ubuntu@"$host3" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
+        ssh -i "$ssh_key" -o StrictHostKeyChecking=no -t ubuntu@"$host3" "echo '$(cat $ssh_key)' > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa && exit" &>install.log
     fi
-
-}
+    
 ansible_playbook() {    
     echo "Executing ansible-playbook.."
     # Set the ANSIBLE_CONFIG environment variable
