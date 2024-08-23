@@ -92,7 +92,7 @@ ansible_playbook() {
     echo "Executing ansible-playbook.."
     # Set the ANSIBLE_CONFIG environment variable
     #export ANSIBLE_CONFIG=ansible.cfg
-    echo "Ansible config set to $ANSIBLE_CONFIG"
+    #echo "Ansible config set to $ANSIBLE_CONFIG"
     sleep 20
     ansible all -m ping -i hosts || exit 1
     if [ $? -eq 0 ]; then
@@ -108,7 +108,7 @@ ansible_playbook() {
 install_dependencies
 setup_permissions
 invoke_python_script
-ssh_to_servers $SERVERS_FIP $SSH_KEY
+#ssh_to_servers $SERVERS_FIP $SSH_KEY
 ansible_playbook
 exit 1
 echo "Installation and configuration completed successfully."
