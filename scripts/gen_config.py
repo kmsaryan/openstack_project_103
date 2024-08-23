@@ -50,8 +50,9 @@ def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
     bastion_fip = fip_map.get(bastion_name, "")
     haproxy_fip1 = fip_map.get(haproxy_server, "")
     haproxy_fip2 = fip_map.get(haproxy_server2, "")
-    
-    with open('config', 'w') as f:
+    config_path = os.path.expanduser('~/.ssh/config')
+
+    with open(config_path, 'w') as f:
         f.write("Host *\n")
         f.write("\tUser ubuntu\n")
         f.write(f"\tIdentityFile {key_path}\n")
@@ -82,6 +83,7 @@ def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
                 f.write(f"\tProxyJump {bastion_name}\n")
 
 def generate_ansible_config(tag_name, fip_map, bastion_name, key_path):
+
     with open('ansible.cfg', 'w') as f:
         f.write("[defaults]\n")
         f.write("inventory = hosts\n")
@@ -92,7 +94,7 @@ def generate_ansible_config(tag_name, fip_map, bastion_name, key_path):
         f.write("control_master = auto\n")
         f.write("control_persist = yes\n")
         f.write("ssh_args = -o ForwardAgent=yes\n")
-        f.write(f"ansible_ssh_common_args = -o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')}-o IdentityFile={key_path}\n")
+        f.write(f"ansible_ssh_common_args = -o ProxyJump=ubuntu@{fip_map.get(bastion_name, '')} -o IdentityFile={key_path}\n")
 
 def generate_host_file(internal_ips, fip_map, tag_name, key_path):
     bastion_name = f"{tag_name}_bastion"
@@ -129,7 +131,7 @@ def main(tag_name, key_path):
     print("Floating IPs:", fip_map)
     generate_ssh_config(internal_ips, fip_map, tag_name, key_path)
     print("Generated SSH config.")
-    generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion", key_path)
+    #generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion", key_path)
     print("Generated Ansible config.")
     generate_host_file(internal_ips, fip_map, tag_name, key_path)
     print("Generated hosts file.")
