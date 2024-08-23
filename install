@@ -4,6 +4,7 @@ if [ "$#" -ne 3 ]; then
     echo "Usage: $0 <openrc> <tag> <ssh_key>"
     exit 1
 fi
+
 OPENRC=$1
 TAG=$2
 SSH_KEY=$3
@@ -13,25 +14,34 @@ SERVERS_FIP="servers_fip"
 install_dependencies() {
     touch install.log
     chmod 777 install.log
-    echo "Checking and installing necessary dependencies..."
+    echo "Checking and installing necessary dependencies..." | tee -a install.log
     if ! command -v python3 &> install.log; then
-        sudo apt update -y > install.log
-        sudo apt install -y python3 > install.log
+        sudo apt update -y >> install.log
+        sudo apt install -y python3 >> install.log
     fi
     if ! command -v pip3 &> install.log; then
-        sudo apt install -y python3-pip > install.log
+        sudo apt install -y python3-pip >> install.log
     fi
     if ! command -v openstack &> install.log; then
-        sudo apt install -y python3-openstackclient > install.log
+        sudo apt install -y python3-openstackclient >> install.log
     fi
+    pip3 install --upgrade pip >> install.log
+    if ! pip3 show openstacksdk &>/install.log; then
+        pip3 install openstacksdk==3.1.0 >> install.log 
+    fi
+    if ! pip3 show argparse &>/install.log; then
+        pip3 install argparse >> install.log
+    fi   
+    if ! pip3 show subprocess32 &>/install.log; then
+        pip3 install subprocess32 >> install.log
+    fi
+
     if ! command -v ansible &> install.log; then
-        sudo add-apt-repository --yes --update ppa:ansible/ansible > install.log
-        sudo apt install -y ansible > install.log
+        sudo apt update -y >> install.log
+        sudo apt install -y software-properties-common >> install.log
+        sudo apt-add-repository --yes --update ppa:ansible/ansible >> install.log
+        sudo apt install -y ansible >> install.log
     fi
-    if ! dpkg-query -W -f='${Status}' software-properties-common 2>install.log | grep -q "ok installed"; then
-        sudo apt install -y software-properties-common > install.log
-    fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > install.log
 }
 
 # Function to set up permissions
