@@ -9,28 +9,27 @@ OPENRC=$1
 TAG=$2
 
 install_dependencies() {
-    touch cleanup.log
-    chmod 777 cleanup.log
+    touch install.log
+    chmod 777 install.log
     echo "Checking and installing necessary dependencies..."
-    sudo apt update > cleanup.log
-    sudo apt-get upgrade -y > cleanup.log
-    if ! command -v python3 &> cleanup.log; then
-        sudo apt-get install -y python3 > cleanup.log
+    if ! command -v python3 &> install.log; then
+        sudo apt update -y > install.log
+        sudo apt install -y python3 > install.log
     fi
-    if ! command -v pip3 &> cleanup.log; then
-        sudo apt-get install -y python3-pip > cleanup.log
+    if ! command -v pip3 &> install.log; then
+        sudo apt install -y python3-pip > install.log
     fi
-    if ! command -v openstack &> cleanup.log; then
-        sudo apt-get install -y python3-openstackclient > cleanup.log
+    if ! command -v openstack &> install.log; then
+        sudo apt install -y python3-openstackclient > install.log
     fi
-    if ! command -v ansible &> cleanup.log; then
-        sudo add-apt-repository --yes --update ppa:ansible/ansible > cleanup.log
-        sudo apt-get install -y ansible > cleanup.log
+    if ! command -v ansible &> install.log; then
+        sudo add-apt-repository --yes --update ppa:ansible/ansible > install.log
+        sudo apt install -y ansible > install.log
     fi
-    if ! dpkg-query -W -f='${Status}' software-properties-common 2>cleanup.log | grep -q "ok installed"; then
-        sudo apt-get install -y software-properties-common > cleanup.log
+    if ! dpkg-query -W -f='${Status}' software-properties-common 2>install.log | grep -q "ok installed"; then
+        sudo apt install -y software-properties-common > install.log
     fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > cleanup.log
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > install.log
 }
 
 
@@ -45,7 +44,7 @@ invoke_python_script() {
     echo "sourced $OPENRC"
     python3 scripts/cleanup.py $OPENRC $TAG || exit 1
 }
-
+{}
 # Main script execution
 install_dependencies
 setup_permissions

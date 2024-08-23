@@ -10,28 +10,27 @@ TAG=$2
 SSH_KEY=$3
 
 install_dependencies() {
-    touch operate.log
-    chmod 777 operate.log
+    touch install.log
+    chmod 777 install.log
     echo "Checking and installing necessary dependencies..."
-    sudo apt update > operate.log
-    sudo apt-get upgrade -y > operate.log
-    if ! command -v python3 &> operate.log; then
-        sudo apt-get install -y python3 > operate.log
+    if ! command -v python3 &> install.log; then
+        sudo apt update -y > install.log
+        sudo apt install -y python3 > install.log
     fi
-    if ! command -v pip3 &> operate.log; then
-        sudo apt-get install -y python3-pip > operate.log
+    if ! command -v pip3 &> install.log; then
+        sudo apt install -y python3-pip > install.log
     fi
-    if ! command -v openstack &> operate.log; then
-        sudo apt-get install -y python3-openstackclient > operate.log
+    if ! command -v openstack &> install.log; then
+        sudo apt install -y python3-openstackclient > install.log
     fi
-    if ! command -v ansible &> operate.log; then
-        sudo add-apt-repository --yes --update ppa:ansible/ansible > operate.log
-        sudo apt-get install -y ansible > operate.log
+    if ! command -v ansible &> install.log; then
+        sudo add-apt-repository --yes --update ppa:ansible/ansible > install.log
+        sudo apt install -y ansible > install.log
     fi
-    if ! dpkg-query -W -f='${Status}' software-properties-common 2>operate.log | grep -q "ok installed"; then
-        sudo apt-get install -y software-properties-common > operate.log
+    if ! dpkg-query -W -f='${Status}' software-properties-common 2>install.log | grep -q "ok installed"; then
+        sudo apt install -y software-properties-common > install.log
     fi
-    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > operate.log
+    pip3 install python-openstackclient argparse subprocess32 python-openstacksdk > install.log
 }
 
 
