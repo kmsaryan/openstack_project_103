@@ -131,7 +131,7 @@ def main(tag_name, key_path):
     generate_ssh_config(internal_ips, fip_map, tag_name, key_path)
     print("Generated SSH config.")
     #generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion", key_path)
-    print("Generated Ansible config.")
+    #print("Generated Ansible config.")
     generate_host_file(internal_ips, fip_map, tag_name, key_path)
     print("Generated hosts file.")
 

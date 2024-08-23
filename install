@@ -93,7 +93,7 @@ ansible_playbook() {
     # Set the ANSIBLE_CONFIG environment variable
     #export ANSIBLE_CONFIG=ansible.cfg
     #echo "Ansible config set to $ANSIBLE_CONFIG"
-    sleep 20
+    sleep 40
     ansible all -m ping -i hosts || exit 1
     if [ $? -eq 0 ]; then
         echo "Ping successful to hosts."    
