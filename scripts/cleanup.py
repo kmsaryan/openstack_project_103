@@ -151,8 +151,9 @@ def delete_keypair(conn, keypair_name):
 
 def delete_files(tag_name):
     # List of files to delete
-    config_file = "config"
-    files_to_delete = ['servers_fip', 'vip_address', 'hosts','ansible.cfg', config_file]
+    config_file = os.path.expanduser("~/.ssh/config")
+    known_hosts_file = os.path.expanduser("~/.ssh/known_hosts")
+    files_to_delete = ['servers_fip', 'vip_address', 'hosts','ansible.cfg', config_file,known_hosts_file]
     for file_name in files_to_delete:
         try:
             os.remove(file_name)
