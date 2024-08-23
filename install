@@ -15,7 +15,7 @@ install_dependencies() {
     chmod 777 install.log
     echo "Checking and installing necessary dependencies..."
     if ! command -v python3 &> install.log; then
-        sudo apt update > install.log
+        sudo apt update -y > install.log
         sudo apt install -y python3 > install.log
     fi
     if ! command -v pip3 &> install.log; then

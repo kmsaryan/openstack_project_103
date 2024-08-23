@@ -69,17 +69,17 @@ def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
         if haproxy_fip1:
             f.write(f"Host {haproxy_server}\n")
             f.write(f"\tHostName {haproxy_fip1}\n")
-            f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
+            f.write(f"\tProxyJump {bastion_name}\n")
         if haproxy_fip2:
             f.write(f"Host {haproxy_server2}\n")
             f.write(f"\tHostName {haproxy_fip2}\n")
-            f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
+            f.write(f"\tProxyJump {bastion_name}\n")
 
         for server_name, internal_ip in internal_ips.items():
             if 'dev' in server_name:
                 f.write(f"Host {server_name}\n")
                 f.write(f"\tHostName {internal_ip}\n")
-                f.write(f"\tProxyCommand ssh -W %h:%p {bastion_name}\n")
+                f.write(f"\tProxyJump {bastion_name}\n")
 
 def generate_ansible_config(tag_name, fip_map, bastion_name, key_path):
     with open('ansible.cfg', 'w') as f:
