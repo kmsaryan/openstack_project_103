@@ -50,7 +50,7 @@ def generate_ssh_config(internal_ips, fip_map, tag_name, key_path):
     bastion_fip = fip_map.get(bastion_name, "")
     haproxy_fip1 = fip_map.get(haproxy_server, "")
     haproxy_fip2 = fip_map.get(haproxy_server2, "")
-    config_path = os.path.expanduser('config')
+    config_path = os.path.expanduser('~/.ssh/config')
 
     with open(config_path, 'w') as f:
         f.write("Host *\n")
@@ -131,7 +131,7 @@ def main(tag_name, key_path):
     print("Floating IPs:", fip_map)
     generate_ssh_config(internal_ips, fip_map, tag_name, key_path)
     print("Generated SSH config.")
-    generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion", key_path)
+    #generate_ansible_config(tag_name, fip_map, f"{tag_name}_bastion", key_path)
     print("Generated Ansible config.")
     generate_host_file(internal_ips, fip_map, tag_name, key_path)
     print("Generated hosts file.")
